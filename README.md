@@ -4,8 +4,6 @@ A **free, open-source** Forge app for **Confluence Cloud** that shows what fills
 
 Confluence Cloud Standard has a 250 GB storage limit, and Atlassian offers no built-in way to see, site-wide, which files, old versions and trashed items use that space. This app indexes your site, scores its health, lists every attachment with filters, and turns cleanup into reviewed, audited batches.
 
-> Based on a white paper from November 2026. This repository implements the storage-cleanup core of that design; see [Roadmap](#roadmap) for the rest.
-
 ## What it does
 
 | Area | What you get |
