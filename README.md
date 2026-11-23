@@ -1,10 +1,10 @@
-# Confluence Optimizer & Attachment Manager
+# Confluence Optimizer
 
 A **free, open-source** Forge app for **Confluence Cloud** that shows what fills your storage and helps you clean it up safely.
 
 Confluence Cloud Standard has a 250 GB storage limit, and Atlassian offers no built-in way to see, site-wide, which files, old versions and trashed items use that space. This app indexes your site, scores its health, lists every attachment with filters, and turns cleanup into reviewed, audited batches.
 
-> Based on the white paper *Confluence Optimizer and Attachment Manager* (Nov 2026). This repository implements the storage-cleanup core of that design; see [Roadmap](#roadmap) for the rest.
+> Based on a white paper from November 2026. This repository implements the storage-cleanup core of that design; see [Roadmap](#roadmap) for the rest.
 
 ## What it does
 
@@ -43,7 +43,7 @@ forge deploy -e production
 forge install -e production --product confluence --site <your-site>.atlassian.net
 ```
 
-Then open **Confluence → Settings (gear) → Optimizer & Attachment Manager** and click **Scan now**.
+Then open **Confluence → Settings (gear) → Confluence Optimizer** and click **Scan now**.
 
 Full instructions, including costs and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
 

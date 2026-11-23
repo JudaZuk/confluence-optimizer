@@ -38,7 +38,7 @@ Use `-e development` instead while trying changes; development installs show a "
 
 ## 4. First run
 
-1. In Confluence, open **Settings (gear icon) → Optimizer & Attachment Manager** (in the left menu of Confluence administration).
+1. In Confluence, open **Settings (gear icon) → Confluence Optimizer** (in the left menu of Confluence administration).
 2. The first time, the app sets up its database; this takes about a minute.
 3. Open **Settings** in the app and check the storage limit (250 GB by default) and thresholds.
 4. Click **Scan now**. You can close the page; the scan runs in the background. Rough guide: a few minutes for small sites, an hour or more for sites with hundreds of thousands of pages.
