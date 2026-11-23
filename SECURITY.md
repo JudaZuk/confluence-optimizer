@@ -23,7 +23,7 @@ The app has no egress permissions: it cannot send data anywhere outside Atlassia
 ## Design
 
 - **Approval gate.** Delete scopes are only used by `exec-worker`, which only processes requests whose status is `approved`. Only Confluence administrators can approve (`decideRequest` exists only in the admin resolver, and it re-checks admin rights).
-- **Server-side authorization.** Every admin resolver call checks `GET /wiki/rest/api/user/current?expand=operations` as the user (`administer` on `application`). Every space resolver call checks `GET /wiki/rest/api/space/{key}?expand=operations` as the user (`administer` on `space`) and takes the space from the Forge module context, never from the request payload.
+- **Server-side authorization.** Every admin resolver call checks `GET /wiki/rest/api/user/current?expand=operations` as the user (`administer` on `application`). Every space resolver call checks `GET /wiki/api/v2/spaces/{id}/operations` as the user (`administer` on `space`), falling back to `GET /wiki/rest/api/space/{key}?expand=operations` and takes the space from the Forge module context, never from the request payload.
 - **Scoped queries.** Space-level requests and lists are filtered by space id on the server, including when items are chosen by id.
 - **SQL injection.** All values are bound parameters; sort orders and columns come from whitelists. `test/lib.test.js` checks this.
 - **CSV injection.** Text cells starting with `= + - @` are prefixed with `'`.

@@ -58,6 +58,9 @@ forge.confluence = async (path, options) => {
   if (p === '/wiki/rest/api/user/current') {
     return { status: 200, body: { operations: currentUser.startsWith('admin') ? [{ operation: 'administer', targetType: 'application' }] : [] } };
   }
+  if (p === '/wiki/api/v2/spaces/100/operations') {
+    return { status: 200, body: { operations: currentUser === 'spaceadmin-2' ? [{ operation: 'administer', targetType: 'space' }] : [{ operation: 'read', targetType: 'space' }] } };
+  }
   if (p === '/wiki/rest/api/space/ENG') {
     return { status: 200, body: { operations: currentUser === 'spaceadmin-1' ? [{ operation: 'administer', targetType: 'space' }] : [] } };
   }
@@ -179,6 +182,10 @@ test('space admins are scoped to their space and cannot approve', async () => {
   const lastSelect = forge.sqlLog.filter((l) => l.query.includes('FROM attachments a')).at(-1);
   assert.equal(lastSelect.params[0], '100', 'space scope comes from context, not from the payload');
   assert.equal(app.spaceResolver.defs.decideRequest, undefined, 'no approve endpoint in the space resolver');
+
+  currentUser = 'spaceadmin-2'; // only the v2 permitted-operations endpoint reports admin
+  const viaV2 = await call(app.spaceResolver, 'getStatus', {}, ctx);
+  assert.equal(viaV2.error, undefined, viaV2.error);
 
   currentUser = 'user-2';
   const denied = await call(app.spaceResolver, 'getStatus', {}, ctx);

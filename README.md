@@ -4,6 +4,13 @@ A **free, open-source** Forge app for **Confluence Cloud** that shows what fills
 
 Confluence Cloud Standard has a 250 GB storage limit, and Atlassian offers no built-in way to see, site-wide, which files, old versions and trashed items use that space. This app indexes your site, scores its health, lists every attachment with filters, and turns cleanup into reviewed, audited batches.
 
+> Based on a white paper from November 2026. This repository implements the storage-cleanup core of that design; see [Roadmap](#roadmap) for the rest.
+
+> [!WARNING]
+> **Costs: read this before you deploy.** The app is free and open source, but it runs on Atlassian Forge, and since 1 January 2026 Forge usage is billed to the **owner of the Developer Space the app is registered in**. That is whoever runs `forge register`, **not** your Confluence subscription. Each app gets a monthly free allowance, and usage above it is charged once a payment method has been added (without one, Atlassian may interrupt the app).
+>
+> **Deploying for an organisation?** Register the app in a Developer Space owned by that organisation, not in your personal one. See [Who pays](docs/INSTALL.md#who-pays-read-first).
+
 ## What it does
 
 | Area | What you get |
@@ -47,7 +54,7 @@ Full instructions, including costs and troubleshooting: [docs/INSTALL.md](docs/I
 
 ## Cost
 
-The app itself is free (Apache 2.0). It runs on Atlassian's Forge platform, which has a monthly free usage allowance per app and charges for usage above it since January 2026. A typical Standard site stays well within the allowance; see [docs/INSTALL.md#cost](docs/INSTALL.md#cost).
+The app itself is free (Apache 2.0). Forge usage is billed to the owner of the Developer Space the app is registered in, with a monthly free allowance per app. A typical Standard site is expected to stay within the allowance; see [Who pays](docs/INSTALL.md#who-pays-read-first) and [Cost](docs/INSTALL.md#cost).
 
 ## Documentation
 

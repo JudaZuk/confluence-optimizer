@@ -9,6 +9,7 @@ Fixes from the first test on a developer site:
 - Files in the trash show only a trash flag, not "unused" or other cleanup flags
 - Long forecasts read "more than 10 years" instead of e.g. "4931 months"
 - Removed the duplicate page heading in the admin console
+- Space admins who are not site admins could be refused: the space admin check now asks Confluence's REST v2 "permitted operations" first (v1 as fallback) and logs the reason when it refuses
 - Correct singular and plural wording ("1 page", "3 pages")
 - Deleting old attachment versions is no longer marked experimental (tested on a developer site)
 

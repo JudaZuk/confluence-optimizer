@@ -119,6 +119,12 @@ export function getCurrentUserOperations() {
   return request('user', route`/wiki/rest/api/user/current?${q}`);
 }
 
+/** REST v2: operations the signed-in user may perform on a space. */
+export function getSpacePermittedOperations(spaceId) {
+  return request('user', route`/wiki/api/v2/spaces/${spaceId}/operations`);
+}
+
+/** REST v1 fallback: the space with the user's operations expanded. */
 export function getSpaceOperationsForUser(spaceKey) {
   const q = new URLSearchParams({ expand: 'operations' });
   return request('user', route`/wiki/rest/api/space/${spaceKey}?${q}`);

@@ -1,5 +1,23 @@
 # Install and operate
 
+## Who pays (read first)
+
+Forge apps run on Atlassian's infrastructure. Since 1 January 2026 their usage is billed per **Developer Space**: the container in the Forge developer console that every app belongs to. The admins of that space are responsible for usage charges. Your Confluence subscription does not cover them.
+
+- Each app has a monthly **free allowance**; most sites using this app are expected to stay inside it (see [Cost](#cost)).
+- Charges above the allowance are made only to a payment method added to the Developer Space's billing account. Without one, Atlassian may interrupt the app if the allowance is exceeded.
+- `forge register` asks which Developer Space to use (or creates one). **That choice decides who is responsible for any charges.**
+
+### Deploying for a company
+
+Use a Developer Space owned by the company, not a personal one:
+
+1. Someone responsible for the company's Atlassian billing (for example IT) signs in to the developer console at <https://developer.atlassian.com/console/myapps/>, creates a **Developer Space** with the company's name, and decides whether to add a company payment method.
+2. They add the people who will deploy the app under **Members**. The **Developer** role can create and deploy apps but has no access to billing.
+3. The deployer runs `forge register` in this project and chooses the **company** Developer Space when asked.
+
+If you already registered the app in a personal space, either register it again in the company space (simplest: `forge register` creates a new app; uninstall and delete the old one), or ask Atlassian support to transfer the app between spaces.
+
 ## Requirements
 
 - A Confluence Cloud site where you are a **site admin** (Standard, Premium or Enterprise; built with Standard's 250 GB limit in mind).
@@ -14,6 +32,8 @@ forge login          # paste an Atlassian API token from id.atlassian.com/manage
 ```
 
 ## 2. Get the code and register your copy
+
+> **Before `forge register`:** decide which Developer Space the app belongs to. Its owner is responsible for usage charges. See [Who pays](#who-pays-read-first).
 
 ```bash
 git clone https://github.com/<you>/confluence-optimizer.git
