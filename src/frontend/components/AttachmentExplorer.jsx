@@ -11,12 +11,11 @@ import { formatBytes, formatDate, formatNumber } from '../../shared/format.js';
 export const FINDING_OPTIONS = [
   { label: 'All attachments', value: 'all' },
   { label: 'Unused (not shown on any page)', value: 'unused' },
-  { label: 'Orphaned (page deleted or missing)', value: 'orphaned' },
   { label: 'Probable duplicates', value: 'duplicates' },
   { label: 'Many old versions', value: 'versions' },
   { label: 'On stale pages', value: 'stale' },
   { label: 'Large files', value: 'large' },
-  { label: 'In trash', value: 'trash' },
+  { label: 'In trash (incl. files on deleted pages)', value: 'trash' },
 ];
 
 const CATEGORY_OPTIONS = [
@@ -62,9 +61,11 @@ const find = (options, value) => options.find((o) => o.value === value) || optio
 const filterBar = xcss({ paddingBottom: 'space.100' });
 
 function flags(row) {
+  // Something already in the trash is only "in trash": other cleanup flags would be noise.
+  if (row.status === 'trashed' || row.containerStatus === 'trashed') {
+    return <Lozenge appearance="removed">{row.status === 'trashed' ? 'trash' : 'page in trash'}</Lozenge>;
+  }
   const out = [];
-  if (row.status === 'trashed' || row.containerStatus === 'trashed') out.push(<Lozenge key="t" appearance="removed">trash</Lozenge>);
-  if (row.orphanReason) out.push(<Lozenge key="o" appearance="moved">orphaned</Lozenge>);
   if (row.referenced === false) out.push(<Lozenge key="u" appearance="new">unused</Lozenge>);
   if (row.versions > 1) out.push(<Lozenge key="v">{`${row.versions} versions`}</Lozenge>);
   return out.length ? <Inline space="space.050">{out}</Inline> : null;

@@ -23,7 +23,7 @@ export const HEALTH_WEIGHTS = {
  * @param {object} m
  * @param {number} m.totalBytes        indexed storage incl. estimated old versions and trash
  * @param {number} m.quotaBytes        storage limit of the site (e.g. 250 GB on Standard)
- * @param {number} m.reclaimableBytes  trash + old versions + orphaned + unused + duplicate copies (deduplicated)
+ * @param {number} m.reclaimableBytes  trash + unused + duplicate copies + old versions, each file counted once
  * @param {number} m.trashBytes
  * @param {number} m.pageCount
  * @param {number} m.stalePageCount
@@ -69,7 +69,7 @@ export function computeHealth(m) {
       key: 'growth',
       label: 'Growth',
       detail: Number.isFinite(monthsLeft)
-        ? `Limit reached in about ${monthsLeft < 1 ? 'less than a month' : `${Math.round(monthsLeft)} months`} at the current rate`
+        ? `Limit reached in ${describeMonths(monthsLeft)} at the current rate`
         : 'No measurable growth in the last 30 days',
       // Full penalty when the limit is less than 3 months away, none beyond 24 months.
       penalty: Number.isFinite(monthsLeft) ? HEALTH_WEIGHTS.growth * (1 - ramp(monthsLeft, 3, 24)) : 0,
@@ -78,6 +78,15 @@ export function computeHealth(m) {
 
   const score = Math.max(0, Math.min(100, Math.round(100 - components.reduce((s, c) => s + c.penalty, 0))));
   return { score, grade: gradeFor(score), components, monthsLeft: Number.isFinite(monthsLeft) ? monthsLeft : null };
+}
+
+/** "less than a month", "about 7 months", "about 3 years", "more than 10 years". */
+export function describeMonths(months) {
+  const m = Math.max(0, Math.round(months));
+  if (months < 1) return 'less than a month';
+  if (m > 120) return 'more than 10 years';
+  if (m >= 24) return `about ${Math.round(m / 12)} years`;
+  return `about ${m} month${m === 1 ? '' : 's'}`;
 }
 
 export function gradeFor(score) {

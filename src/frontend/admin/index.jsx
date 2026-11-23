@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import ForgeReconciler, { Stack, Text, Heading, Tabs, TabList, Tab, TabPanel, Box, SectionMessage, Button, Inline, useProductContext } from '@forge/react';
+import ForgeReconciler, { Stack, Text, Tabs, TabList, Tab, TabPanel, Box, SectionMessage, Button, Inline, useProductContext } from '@forge/react';
 import { call } from '../components/api.js';
 import { ErrorMessage, Loading } from '../components/ui.jsx';
 import { ScanStatus } from '../components/ScanStatus.jsx';
@@ -97,10 +97,7 @@ function AdminApp() {
 
   return (
     <Stack space="space.300">
-      <Stack space="space.100">
-        <Heading size="large">Confluence Optimizer</Heading>
-        <Text>Find what fills your Confluence storage and clean it up safely: every change is reviewed, approved and logged.</Text>
-      </Stack>
+      <Text>Find what fills your Confluence storage and clean it up safely: every change is reviewed, approved and logged.</Text>
       <ScanStatus scan={status.scan} isAdmin onStart={startScan} onCancel={cancelScan} />
       <ErrorMessage error={error} />
       <Tabs id="coam-admin-tabs" selected={tab} onChange={(i) => setTab(i)}>

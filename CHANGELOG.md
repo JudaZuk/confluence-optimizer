@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1 – 2026-11-23
+
+Fixes from the first test on a developer site:
+
+- "Could be reclaimed" counts each file once (it double-counted files that matched several findings), which also corrects the health score
+- Removed the "Orphaned files" finding: on Confluence Cloud, files on deleted pages go to the trash with the page and are reported under Trash
+- Files in the trash show only a trash flag, not "unused" or other cleanup flags
+- Long forecasts read "more than 10 years" instead of e.g. "4931 months"
+- Removed the duplicate page heading in the admin console
+
 ## 0.1.0 – 2026-11-23
 
 First public version.

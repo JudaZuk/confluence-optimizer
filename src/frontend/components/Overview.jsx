@@ -12,14 +12,22 @@ const CATEGORY_LABELS = {
 };
 
 const FINDING_ROWS = [
-  { key: 'trash', label: 'In trash', hint: 'Deleted but still counted against storage until purged' },
+  { key: 'trash', label: 'In trash', hint: 'Deleted files, and files on deleted pages. Still counted against storage until purged' },
   { key: 'versions', label: 'Old versions', hint: 'Versions beyond the number you keep (estimated size)' },
   { key: 'unused', label: 'Unused files', hint: 'Not referenced on any page' },
-  { key: 'orphaned', label: 'Orphaned files', hint: 'Their page is in the trash or no longer exists' },
   { key: 'duplicates', label: 'Probable duplicates', hint: 'Same name and size; reclaimable = extra copies' },
   { key: 'stale', label: 'On stale pages', hint: 'Pages not edited for the stale threshold' },
   { key: 'large', label: 'Large files', hint: 'Above the large-file threshold' },
 ];
+
+/** "about 7 months", "about 3 years", "more than 10 years". */
+function describeMonths(months) {
+  const m = Math.max(0, Math.round(months));
+  if (m < 1) return 'less than a month';
+  if (m > 120) return 'more than 10 years';
+  if (m >= 24) return `about ${Math.round(m / 12)} years`;
+  return `about ${m} month${m === 1 ? '' : 's'}`;
+}
 
 function gradeAppearance(grade) {
   return { A: 'success', B: 'success', C: 'inprogress', D: 'moved', F: 'removed' }[grade] || 'default';
@@ -39,7 +47,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
   const t = summary.totals;
   const usage = summary.quotaBytes ? t.storedBytes / summary.quotaBytes : 0;
 
-  const findingRows = FINDING_ROWS.map((f) => {
+  const findingTableRows = FINDING_ROWS.map((f) => {
     const v = summary.findings[f.key] || { count: 0, bytes: 0 };
     const reclaim = f.key === 'duplicates' ? v.reclaimableBytes : v.bytes;
     return {
@@ -80,7 +88,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
           value={formatBytes(t.storedBytes)}
           detail={isSite ? `${formatPercent(usage)} of ${formatBytes(summary.quotaBytes, 0)} limit` : `${formatNumber(t.attachments)} attachments`}
         />
-        <Kpi label="Could be reclaimed (est.)" value={formatBytes(t.reclaimableBytes)} detail="Trash, old versions, unused, orphaned, duplicate copies" />
+        <Kpi label="Could be reclaimed (est.)" value={formatBytes(t.reclaimableBytes)} detail="Trash, old versions, unused files and duplicate copies, each file counted once" />
         <Kpi label="In trash" value={formatBytes(t.trashBytes)} detail={`${formatNumber(t.trashCount)} files · ${formatNumber(t.trashedPages)} pages`} />
       </Inline>
 
@@ -90,7 +98,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
             <Text>
               <Strong>Storage limit</Strong> · {formatBytes(t.storedBytes)} of {formatBytes(summary.quotaBytes, 0)}
               {summary.health.monthsLeft !== null && summary.health.monthsLeft !== undefined
-                ? ` · limit reached in about ${Math.max(0, Math.round(summary.health.monthsLeft))} months at the current rate`
+                ? ` · limit reached in ${describeMonths(summary.health.monthsLeft)} at the current rate`
                 : ''}
             </Text>
             <ProgressBar value={Math.min(1, usage)} />
@@ -105,7 +113,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
       <Section title="What you can clean up">
         <DynamicTable
           head={{ cells: [{ key: 'what', content: 'Finding' }, { key: 'count', content: 'Files' }, { key: 'bytes', content: 'Reclaimable' }, { key: 'act', content: '' }] }}
-          rows={findingRows}
+          rows={findingTableRows}
         />
       </Section>
 

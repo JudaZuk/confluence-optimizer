@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileExtension, typeCategory, baseName } from '../src/backend/lib/files.js';
-import { computeHealth, gradeFor } from '../src/backend/lib/health.js';
+import { computeHealth, gradeFor, describeMonths } from '../src/backend/lib/health.js';
 import { buildAttachmentWhere, sortClause, paging } from '../src/backend/lib/filters.js';
 import { toCsv } from '../src/backend/lib/csv.js';
 import { toSqlDate, fromSqlDate, ageBand, daysAgo } from '../src/backend/lib/time.js';
@@ -38,6 +38,14 @@ test('health score is 100 for a tidy site and drops with problems', () => {
   assert.equal(gradeFor(59), 'D');
 });
 
+test('forecasts read naturally', () => {
+  assert.equal(describeMonths(0.4), 'less than a month');
+  assert.equal(describeMonths(1), 'about 1 month');
+  assert.equal(describeMonths(7.2), 'about 7 months');
+  assert.equal(describeMonths(40), 'about 3 years');
+  assert.equal(describeMonths(4931), 'more than 10 years');
+});
+
 test('health score handles an empty site', () => {
   const empty = computeHealth({ totalBytes: 0, quotaBytes: 250 * GB, pageCount: 0 });
   assert.equal(empty.score, 100);
@@ -62,7 +70,7 @@ test('filter builder binds every user value as a parameter', () => {
 });
 
 test('every finding produces balanced SQL', () => {
-  for (const finding of ['all', 'unused', 'orphaned', 'duplicates', 'versions', 'stale', 'large', 'trash', 'bogus']) {
+  for (const finding of ['all', 'unused', 'orphaned' /* removed: falls back to all */, 'duplicates', 'versions', 'stale', 'large', 'trash', 'bogus']) {
     const { where, params } = buildAttachmentWhere({ finding }, { exemptSpaceIds: ['1', '2'] });
     assert.equal((where.match(/\?/g) || []).length, params.length, finding);
   }

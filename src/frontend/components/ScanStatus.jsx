@@ -8,7 +8,7 @@ const PHASE_LABELS = {
   attachments: 'Listing attachments',
   content: 'Reading pages and checking references',
   finalize: 'Linking files to pages',
-  missing: 'Looking for orphaned files',
+  missing: 'Checking for files on missing pages',
   cleanup: 'Removing deleted items from the index',
   snapshot: 'Calculating the health score',
   rules: 'Applying retention rules',

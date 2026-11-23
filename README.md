@@ -12,7 +12,7 @@ Confluence Cloud Standard has a 250 GB storage limit, and Atlassian offers no bu
 |---|---|
 | **Overview** | Health score (0–100, A–F) with a transparent breakdown, storage used against your limit, months until the limit at the current growth rate, reclaimable storage, charts by file type, space and month, score history. |
 | **Attachment dashboard** | Every attachment on the site in one table. Filter by space, type, age, size, name and finding; sort by size, age or versions; links to each file; CSV export. |
-| **Findings** | Unused files (not referenced on any page), orphaned files (page trashed or gone), probable duplicates (same name and size), files with many old versions, files on stale pages, large files, trash. |
+| **Findings** | Unused files (not referenced on any page), probable duplicates (same name and size), files with many old versions, files on stale pages, large files, trash (including files on deleted pages). |
 | **Trash storage report** | Trash size and share of storage, breakdown by space, file type and age, trashed pages with their attachment storage, and reviewed purges. |
 | **Review queue** | Nothing changes until a Confluence administrator approves. Actions: move to trash, purge from trash, delete old versions, purge trashed pages. Each item is re-checked just before it is changed; jobs run in the background and can be stopped. |
 | **Audit log** | Every request, decision, change, failure, export and settings change, with CSV export. |
@@ -63,6 +63,7 @@ The app itself is free (Apache 2.0). It runs on Atlassian's Forge platform, whic
 - **Old version sizes are estimates.** The REST API does not report the size of earlier versions, so they are estimated as the same size as the current version.
 - **Trash age.** The API does not say when an item was trashed. The trash report groups by *time since last change*; retention rules use *the time this app first saw the item in the trash*, which is conservative (nothing is purged early, even on the first scan).
 - **Who deleted what** is only known for deletions made through this app (audit log).
+- **Reclaimable storage** counts each file once, in the first category that applies: trash, unused, duplicate copy, old versions.
 - **Duplicates** are matched by file name and size, not by content.
 - **Unused** cannot see links from outside Confluence (email, other tools, direct download links).
 - **Deleting attachment versions** uses the REST v1 "delete content version" endpoint. Atlassian documents it for content versions; treat it as experimental for attachments and test on a few files first.
@@ -77,7 +78,7 @@ Mapped to the white paper:
 | White paper capability | Status |
 |---|---|
 | Central attachment dashboard, filters, preview links | ✅ |
-| Unused and orphaned file detection | ✅ |
+| Unused and orphaned file detection | ✅ (on Confluence Cloud, files on deleted pages go to the trash with the page, so they are reported under Trash) |
 | Health score + history | ✅ storage-focused score |
 | Bulk actions + review queue | ✅ trash, purge, version pruning, purge trashed pages |
 | Audit log | ✅ |

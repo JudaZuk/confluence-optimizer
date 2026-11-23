@@ -110,14 +110,7 @@ export async function computeSummary(settings, spaceId = null) {
 
   const totalBytes = num(totals?.stored_bytes);
   const trashBytes = num(trash?.bytes);
-  const reclaimableBytes = Math.min(
-    totalBytes,
-    trashBytes +
-      findings.versions.bytes +
-      findings.orphaned.bytes +
-      findings.unused.bytes +
-      findings.duplicates.reclaimableBytes,
-  );
+  const reclaimableBytes = Math.min(totalBytes, await reclaimableTotal(settings, spaceId, exempt, now));
   const quotaBytes = settings.storageQuotaGb * GB;
   const health = computeHealth({
     totalBytes,
@@ -155,6 +148,38 @@ export async function computeSummary(settings, spaceId = null) {
       spaceId: r.space_id, key: r.space_key || '(unknown)', name: r.name || '', count: num(r.n), bytes: num(r.bytes),
     })),
   };
+}
+
+/**
+ * Storage that cleanup could free, counting every file once. Each file is put
+ * in the first bucket that applies, so overlapping findings are not added twice:
+ *   1. in the trash (or on a page in the trash)  -> all its storage
+ *   2. unused                                     -> all its storage
+ *   3. an extra copy of a probable duplicate      -> all its storage
+ *   4. more versions than you keep               -> the old versions only
+ */
+async function reclaimableTotal(settings, spaceId, exempt, now) {
+  const keep = Number(settings.keepVersions) || 1;
+  const sp = spaceId ? [String(spaceId)] : [];
+  const exemptSql = exempt.length ? ` AND (a.space_id IS NULL OR a.space_id NOT IN (${exempt.map(() => '?').join(', ')}))` : '';
+  const row = await queryOne(
+    `SELECT SUM(CASE
+         WHEN a.status = 'trashed' OR c.status = 'trashed' THEN ${STORED_BYTES_SQL}
+         WHEN a.is_referenced = 0 AND c.status IN ('current', 'archived') AND a.modified_at < ? THEN ${STORED_BYTES_SQL}
+         WHEN d.keep_id IS NOT NULL THEN ${STORED_BYTES_SQL}
+         WHEN a.version_number > ? THEN a.file_size * (a.version_number - ?)
+         ELSE 0 END) AS bytes
+     FROM attachments a
+       LEFT JOIN contents c ON c.id = a.container_id
+       LEFT JOIN (
+         SELECT x.dup_key, MIN(x.id) AS keep_id FROM attachments x
+         WHERE x.status IN ('current', 'archived')${spaceId ? ' AND x.space_id = ?' : ''}
+         GROUP BY x.dup_key HAVING COUNT(*) > 1
+       ) d ON d.dup_key = a.dup_key AND a.id <> d.keep_id AND a.status IN ('current', 'archived')
+     WHERE ${spaceId ? 'a.space_id = ?' : '1 = 1'}${exemptSql}`,
+    [daysAgo(settings.unusedMinAgeDays, now), keep, keep, ...sp, ...sp, ...exempt],
+  );
+  return num(row?.bytes);
 }
 
 /** Trash breakdown for the trash storage report. */

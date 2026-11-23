@@ -10,7 +10,6 @@ export const LIVE_STATUSES = ['current', 'archived'];
 export const FINDINGS = {
   all: { label: 'All attachments' },
   unused: { label: 'Unused (not referenced on any page)' },
-  orphaned: { label: 'Orphaned (page deleted or missing)' },
   duplicates: { label: 'Probable duplicates (same name and size)' },
   versions: { label: 'Many old versions' },
   stale: { label: 'On stale pages' },
@@ -72,10 +71,6 @@ export function buildAttachmentWhere(filters = {}, options = {}) {
       add("c.status IN ('current', 'archived')");
       add('a.is_referenced = 0');
       add('a.modified_at < ?', daysAgo(rules.unusedMinAgeDays, now));
-      break;
-    case 'orphaned':
-      add("a.status <> 'trashed'");
-      add('a.orphan_reason IS NOT NULL');
       break;
     case 'duplicates':
       add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);

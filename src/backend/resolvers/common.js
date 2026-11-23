@@ -153,7 +153,6 @@ export function commonHandlers(getScope) {
         { key: 'modifiedAt', label: 'Last modified (UTC)' },
         { key: 'modifiedBy', label: 'Last modified by (account ID)' },
         { key: 'referenced', label: 'Referenced on page' },
-        { key: 'orphanReason', label: 'Orphan reason' },
         { key: 'url', label: 'Link' },
         { key: 'downloadUrl', label: 'Download link' },
       ]);

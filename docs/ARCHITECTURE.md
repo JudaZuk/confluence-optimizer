@@ -50,7 +50,7 @@ The scan is a chain of async events. Each invocation works for up to 12 minutes 
 | spaces | `GET /wiki/api/v2/spaces` (default and archived) | `spaces` |
 | attachments | `GET /wiki/api/v2/attachments?status=current,archived,trashed` (250 per call, site-wide) | `attachments` |
 | content | per space: `GET /spaces/{id}/pages` and `/blogposts` with `body-format=storage` (50 per call), then trashed ones | `contents`, `attachment_refs`, `attachments.is_referenced` |
-| finalize | SQL only, per space | space ids, orphan flags, resolved cross-page references |
+| finalize | SQL only, per space | space ids, resolved cross-page references |
 | missing | SQL only | `orphan_reason = container_missing` |
 | cleanup | SQL only | deletes rows not seen in this scan |
 | snapshot | SQL only | KVS `summary`, `health_snapshots` |
