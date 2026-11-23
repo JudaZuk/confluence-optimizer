@@ -27,6 +27,12 @@ export function formatNumber(n) {
   return (Number(n) || 0).toLocaleString('en-US');
 }
 
+/** "1 page", "3 pages", "1,204 files". Pass the plural when it is not word + "s". */
+export function countOf(n, singular, plural = `${singular}s`) {
+  const v = Number(n) || 0;
+  return `${formatNumber(v)} ${v === 1 ? singular : plural}`;
+}
+
 /** 'YYYY-MM-DD' from an ISO or SQL datetime string. */
 export function formatDate(value) {
   if (!value) return '';

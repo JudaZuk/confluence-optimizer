@@ -1,7 +1,7 @@
 import React from 'react';
 import { Inline, Stack, Text, Strong, Button, Lozenge, SectionMessage } from '@forge/react';
 import { Card } from './ui.jsx';
-import { formatDate, formatNumber } from '../../shared/format.js';
+import { formatDate, formatNumber, countOf } from '../../shared/format.js';
 
 const PHASE_LABELS = {
   spaces: 'Listing spaces',
@@ -43,7 +43,7 @@ export function ScanStatus({ scan, isAdmin, onStart, onCancel }) {
           </Text>
         ) : null}
         {scan?.status === 'done' && c.skippedSpaces ? (
-          <Text>{`${c.skippedSpaces} space(s) could not be read by the app (restricted) and were skipped.`}</Text>
+          <Text>{`${countOf(c.skippedSpaces, 'space')} could not be read by the app (restricted) and ${c.skippedSpaces === 1 ? 'was' : 'were'} skipped.`}</Text>
         ) : null}
         {scan?.status === 'failed' ? (
           <SectionMessage appearance="error"><Text>{scan.error || scan.lastError}</Text></SectionMessage>

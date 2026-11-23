@@ -3,7 +3,7 @@ import {
   Modal, ModalHeader, ModalTitle, ModalBody, ModalFooter, ModalTransition,
   Button, Stack, Text, Strong, TextArea, Textfield, SectionMessage,
 } from '@forge/react';
-import { ACTION_LABELS, IRREVERSIBLE_ACTIONS, formatBytes, formatNumber } from '../../shared/format.js';
+import { ACTION_LABELS, IRREVERSIBLE_ACTIONS, formatBytes, countOf } from '../../shared/format.js';
 import { FieldLabel } from './ui.jsx';
 
 const EXPLANATIONS = {
@@ -11,7 +11,7 @@ const EXPLANATIONS = {
     'Files move to the space trash, where space admins can restore them. Storage is freed only when the trash is purged, for example by a purge request or a retention rule.',
   purge_attachment: 'Files are permanently deleted from the trash. This cannot be undone.',
   prune_versions:
-    'Older versions of each file are permanently deleted and only the newest versions are kept. This cannot be undone. Deleting attachment versions through the REST API is marked experimental by this app: test it on a few files first.',
+    'Older versions of each file are permanently deleted and only the newest versions are kept. The file itself stays on its page. This cannot be undone.',
   purge_page: 'Pages and blog posts are permanently deleted from the trash, together with their attachments. This cannot be undone.',
 };
 
@@ -46,7 +46,7 @@ export function RequestModal({ request, isAdmin, onConfirm, onClose }) {
             <Text>
               <Strong>{request.label}</Strong>
               {request.bytes ? ` · about ${formatBytes(request.bytes)}` : ''}
-              {request.count ? ` · ${formatNumber(request.count)} item(s)` : ''}
+              {request.count ? ` · ${countOf(request.count, 'item')}` : ''}
             </Text>
             <SectionMessage appearance={irreversible ? 'warning' : 'information'}>
               <Text>{EXPLANATIONS[request.action]}</Text>

@@ -4,7 +4,7 @@ import { call, useLoad } from './api.js';
 import { Card, ErrorMessage, Kpi, Loading, Section } from './ui.jsx';
 import { RequestModal } from './RequestModal.jsx';
 import { AttachmentExplorer } from './AttachmentExplorer.jsx';
-import { formatBytes, formatNumber, formatDate, bytesToGb } from '../../shared/format.js';
+import { formatBytes, formatNumber, formatDate, bytesToGb, countOf } from '../../shared/format.js';
 
 /** Trash storage report: hidden storage in space trash, with reviewed purges. */
 export function TrashReport({ mode, summary, spaces, settings, canRequest }) {
@@ -88,7 +88,7 @@ export function TrashReport({ mode, summary, spaces, settings, canRequest }) {
           title="Pages and blog posts in trash"
           actions={
             canRequest ? (
-              <Button appearance="danger" isDisabled={!selectedIds.length} onClick={() => setPending({ action: 'purge_page', count: selectedIds.length, label: `${selectedIds.length} page(s) and their attachments` })}>
+              <Button appearance="danger" isDisabled={!selectedIds.length} onClick={() => setPending({ action: 'purge_page', count: selectedIds.length, label: `${countOf(selectedIds.length, 'page')} and their attachments` })}>
                 Purge selected pages…
               </Button>
             ) : null

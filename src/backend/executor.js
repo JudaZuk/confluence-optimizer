@@ -92,7 +92,7 @@ async function runItem(req, item, params) {
         }
       }
       const size = Number(att.fileSize) || 0;
-      return { freed: size * deleted, event: AUDIT_EVENTS.VERSIONS_DELETED, message: `Deleted ${deleted} old version(s)`, details: { deleted, kept: keep } };
+      return { freed: size * deleted, event: AUDIT_EVENTS.VERSIONS_DELETED, message: `Deleted ${deleted} old version${deleted === 1 ? '' : 's'}`, details: { deleted, kept: keep } };
     }
     case 'purge_page': {
       try {

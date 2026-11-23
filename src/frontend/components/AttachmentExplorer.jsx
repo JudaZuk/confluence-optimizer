@@ -6,7 +6,7 @@ import {
 import { call } from './api.js';
 import { CsvModal, ErrorMessage, FieldLabel, Section } from './ui.jsx';
 import { RequestModal } from './RequestModal.jsx';
-import { formatBytes, formatDate, formatNumber } from '../../shared/format.js';
+import { formatBytes, formatDate, formatNumber, countOf } from '../../shared/format.js';
 
 export const FINDING_OPTIONS = [
   { label: 'All attachments', value: 'all' },
@@ -147,7 +147,7 @@ export function AttachmentExplorer({ mode, spaces = [], preset, settings, canReq
       count,
       bytes: scopeAll ? data.totalBytes : selectedBytes,
       keep: settings?.keepVersions || 3,
-      label: scopeAll ? `All ${formatNumber(count)} attachments matching the filters (max 5,000)` : `${count} selected attachment(s)`,
+      label: scopeAll ? `All ${formatNumber(count)} attachments matching the filters (max 5,000)` : `${countOf(count, 'selected attachment')}`,
     });
   };
 

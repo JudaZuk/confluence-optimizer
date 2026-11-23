@@ -5,7 +5,7 @@ import { computeHealth, gradeFor, describeMonths } from '../src/backend/lib/heal
 import { buildAttachmentWhere, sortClause, paging } from '../src/backend/lib/filters.js';
 import { toCsv } from '../src/backend/lib/csv.js';
 import { toSqlDate, fromSqlDate, ageBand, daysAgo } from '../src/backend/lib/time.js';
-import { formatBytes } from '../src/shared/format.js';
+import { formatBytes, countOf } from '../src/shared/format.js';
 
 const GB = 1024 ** 3;
 
@@ -102,4 +102,7 @@ test('byte formatting', () => {
   assert.equal(formatBytes(0), '0 B');
   assert.equal(formatBytes(1536), '1.5 KB');
   assert.equal(formatBytes(250 * GB), '250.0 GB');
+  assert.equal(countOf(1, 'page'), '1 page');
+  assert.equal(countOf(3, 'page'), '3 pages');
+  assert.equal(countOf(1204, 'file'), '1,204 files');
 });

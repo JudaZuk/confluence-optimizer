@@ -66,7 +66,7 @@ The app itself is free (Apache 2.0). It runs on Atlassian's Forge platform, whic
 - **Reclaimable storage** counts each file once, in the first category that applies: trash, unused, duplicate copy, old versions.
 - **Duplicates** are matched by file name and size, not by content.
 - **Unused** cannot see links from outside Confluence (email, other tools, direct download links).
-- **Deleting attachment versions** uses the REST v1 "delete content version" endpoint. Atlassian documents it for content versions; treat it as experimental for attachments and test on a few files first.
+- **Deleting attachment versions** uses the REST v1 "delete content version" endpoint (tested on Confluence Cloud: the oldest versions are removed, the file and its newest versions stay).
 - **Restricted content:** the app only sees what the app user can read. Spaces it cannot read are skipped and reported.
 - **CSV export** is shown as text to copy (UI Kit cannot trigger file downloads); it is limited to 5,000 rows per export.
 - Atlassian's billed storage figure may differ slightly from the indexed total.

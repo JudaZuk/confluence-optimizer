@@ -9,6 +9,8 @@ Fixes from the first test on a developer site:
 - Files in the trash show only a trash flag, not "unused" or other cleanup flags
 - Long forecasts read "more than 10 years" instead of e.g. "4931 months"
 - Removed the duplicate page heading in the admin console
+- Correct singular and plural wording ("1 page", "3 pages")
+- Deleting old attachment versions is no longer marked experimental (tested on a developer site)
 
 ## 0.1.0 – 2026-11-23
 

@@ -4,7 +4,7 @@ import {
   BarChart, DonutChart, LineChart, HorizontalBarChart, User,
 } from '@forge/react';
 import { Kpi, Section, Card } from './ui.jsx';
-import { formatBytes, formatNumber, formatPercent, bytesToGb, formatDate } from '../../shared/format.js';
+import { formatBytes, formatNumber, formatPercent, bytesToGb, formatDate, countOf } from '../../shared/format.js';
 
 const CATEGORY_LABELS = {
   image: 'Images', video: 'Video', audio: 'Audio', pdf: 'PDF', office: 'Office', archive: 'Archives',
@@ -86,10 +86,10 @@ export function Overview({ summary, history = [], onReview, isSite }) {
         <Kpi
           label={isSite ? 'Storage indexed' : 'Storage in this space'}
           value={formatBytes(t.storedBytes)}
-          detail={isSite ? `${formatPercent(usage)} of ${formatBytes(summary.quotaBytes, 0)} limit` : `${formatNumber(t.attachments)} attachments`}
+          detail={isSite ? `${formatPercent(usage)} of ${formatBytes(summary.quotaBytes, 0)} limit` : countOf(t.attachments, 'attachment')}
         />
         <Kpi label="Could be reclaimed (est.)" value={formatBytes(t.reclaimableBytes)} detail="Trash, old versions, unused files and duplicate copies, each file counted once" />
-        <Kpi label="In trash" value={formatBytes(t.trashBytes)} detail={`${formatNumber(t.trashCount)} files · ${formatNumber(t.trashedPages)} pages`} />
+        <Kpi label="In trash" value={formatBytes(t.trashBytes)} detail={`${countOf(t.trashCount, 'file')} · ${countOf(t.trashedPages, 'page')}`} />
       </Inline>
 
       {isSite ? (
