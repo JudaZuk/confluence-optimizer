@@ -1,0 +1,27 @@
+{
+  "name": "confluence-optimizer",
+  "version": "0.1.0",
+  "description": "Free, open-source Forge app for Confluence Cloud: find what fills your storage (attachments, old versions, trash, duplicates, unused files) and clean it up through a reviewed, audited queue.",
+  "license": "Apache-2.0",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "forge lint",
+    "deploy": "forge deploy",
+    "tunnel": "forge tunnel"
+  },
+  "dependencies": {
+    "@forge/api": "latest",
+    "@forge/bridge": "latest",
+    "@forge/events": "latest",
+    "@forge/kvs": "latest",
+    "@forge/react": "latest",
+    "@forge/resolver": "latest",
+    "@forge/sql": "latest",
+    "react": "^18.3.1"
+  }
+}
