@@ -98,7 +98,7 @@ function AdminApp() {
   return (
     <Stack space="space.300">
       <Stack space="space.100">
-        <Heading size="large">Optimizer &amp; Attachment Manager</Heading>
+        <Heading size="large">Confluence Optimizer</Heading>
         <Text>Find what fills your Confluence storage and clean it up safely: every change is reviewed, approved and logged.</Text>
       </Stack>
       <ScanStatus scan={status.scan} isAdmin onStart={startScan} onCancel={cancelScan} />
