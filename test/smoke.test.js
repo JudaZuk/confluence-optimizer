@@ -175,6 +175,28 @@ test('a request is created, approved and executed with an audit trail', async ()
   }
 });
 
+test('dashboard figures are served from cache and recalculated in the background', async () => {
+  currentUser = 'admin-1';
+  // A cleanup job finished in the previous test, so the cached figures are stale.
+  const first = await call(app.adminResolver, 'getSummary');
+  assert.ok(first.totals, 'cached figures are returned at once');
+  assert.equal(first.refreshing, true);
+  assert.ok(forge.pushed.some((e) => e.queue === 'coam-scan' && e.body.summary === 'site'), 'recalculation queued');
+  await drain('coam-scan', app.scanWorker);
+  const second = await call(app.adminResolver, 'getSummary');
+  assert.equal(second.refreshing, false);
+
+  currentUser = 'spaceadmin-1';
+  const ctx = { extension: { space: { key: 'ENG', id: '100' } } };
+  const pending = await call(app.spaceResolver, 'getSpaceSummary', {}, ctx);
+  assert.equal(pending.pending, true, 'no cached space figures yet');
+  await drain('coam-scan', app.scanWorker);
+  const ready = await call(app.spaceResolver, 'getSpaceSummary', {}, ctx);
+  assert.ok(ready.totals);
+  assert.equal(ready.refreshing, false);
+  currentUser = 'admin-1';
+});
+
 test('a request cannot be approved twice', async () => {
   const created = await call(app.adminResolver, 'createRequest', { action: 'trash_attachment', selection: { ids: ['att1'] } });
   await call(app.adminResolver, 'decideRequest', { id: created.id, approve: false });

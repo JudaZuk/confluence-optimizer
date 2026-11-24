@@ -67,7 +67,7 @@ async function resolveItems({ action, selection, spaceId, settings, keep }) {
     `SELECT a.id, a.title, a.space_id, a.version_number, ${bytesExpr} AS bytes
      FROM attachments a
      WHERE ${where} AND ${statusClause}
-     ORDER BY a.file_size DESC LIMIT ${MAX_ITEMS_PER_REQUEST}`,
+     ORDER BY a.stored_bytes DESC LIMIT ${MAX_ITEMS_PER_REQUEST}`,
     [...bytesParams, ...params, ...statusParams],
   );
   return rows.map((r) => ({ id: r.id, kind: 'attachment', title: r.title, spaceId: r.space_id, bytes: Number(r.bytes) || 0, version: r.version_number }));
@@ -213,4 +213,5 @@ export async function getRequest({ id, spaceId }) {
 
 export async function markSummaryStale() {
   await setState('summary:stale', true);
+  await setState('summary:epoch', Date.now()); // space figures too
 }

@@ -5,9 +5,9 @@ import Resolver from '@forge/resolver';
 import { query, queryOne } from '../db/sql.js';
 import { toCsv } from '../lib/csv.js';
 import { requireSiteAdmin } from '../auth.js';
-import { getSettings, saveSettings, getState } from '../settings.js';
+import { getSettings, saveSettings } from '../settings.js';
 import { startScan, cancelScan, getScanState } from '../scan.js';
-import { takeSnapshot, getCachedSummary, getHistory, computeSummary } from '../summary.js';
+import { getHistory, requestSummary } from '../summary.js';
 import { decideRequest, stopRequest } from '../requests.js';
 import { audit, AUDIT_EVENTS } from '../audit.js';
 import { commonHandlers, safe, schemaReady, EXPORT_LIMIT } from './common.js';
@@ -25,12 +25,9 @@ const handlers = {
   getSummary: async ({ payload, context }) => {
     await adminScope(context);
     if (!(await schemaReady())) return { notReady: true };
-    const settings = await getSettings();
-    let summary = await getCachedSummary();
-    if (payload?.refresh || !summary || (await getState('summary:stale'))) {
-      summary = (await getScanState()).status === 'never' ? await computeSummary(settings) : await takeSnapshot(settings);
-    }
-    return summary;
+    if ((await getScanState()).status === 'never') return { notReady: true };
+    const { summary, refreshing } = await requestSummary(null, Boolean(payload?.refresh));
+    return summary ? { ...summary, refreshing } : { pending: true };
   },
 
   getHistory: async ({ context }) => {
@@ -40,7 +37,7 @@ const handlers = {
 
   listSpaces: async ({ context }) => {
     await adminScope(context);
-    const rows = await query('SELECT id, space_key, name FROM spaces ORDER BY space_key LIMIT 2000');
+    const rows = await query('SELECT id, space_key, name FROM spaces ORDER BY space_key LIMIT 10000');
     return rows.map((r) => ({ id: String(r.id), key: r.space_key, name: r.name }));
   },
 

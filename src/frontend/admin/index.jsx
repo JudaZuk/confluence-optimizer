@@ -61,6 +61,17 @@ function AdminApp() {
     return () => clearInterval(timer);
   }, [running]);
 
+  // Figures are calculated in the background; poll until they are current.
+  const summaryBusy = Boolean(summary?.pending || summary?.refreshing);
+  useEffect(() => {
+    if (!summaryBusy) return undefined;
+    const timer = setTimeout(async () => {
+      const next = await call('getSummary').catch(() => null);
+      if (next) setSummary(next);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [summaryBusy, summary]);
+
   // Until the database exists (first minutes after install), check again.
   useEffect(() => {
     if (!status || status.ready) return undefined;

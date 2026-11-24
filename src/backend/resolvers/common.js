@@ -6,7 +6,7 @@ import { buildAttachmentWhere, sortClause, paging, STORED_BYTES_SQL } from '../l
 import { toCsv } from '../lib/csv.js';
 import { getSettings, getState, setState } from '../settings.js';
 import { getScanState } from '../scan.js';
-import { computeSummary, computeTrashReport, exemptSpaceIds } from '../summary.js';
+import { computeTrashReport, exemptSpaceIds, requestSummary } from '../summary.js';
 import { createRequest, listRequests, getRequest, cancelRequest, RequestError } from '../requests.js';
 import { audit, AUDIT_EVENTS } from '../audit.js';
 import { ForbiddenError } from '../auth.js';
@@ -57,6 +57,29 @@ async function lookupByIds(table, column, ids) {
     for (const r of rows) out.set(String(r.id), r.v);
   }
   return out;
+}
+
+/**
+ * Sorted page of attachments in two steps. Step 1 sorts using only the id and
+ * the sort columns, which keeps the data the database moves around small
+ * (sorting full rows of a large table exceeded Forge SQL's 16 MiB per-query
+ * memory limit). Step 2 fetches the full rows for those ids only.
+ */
+async function pageOfAttachments(where, params, sort, limit, offset) {
+  const ids = (
+    await query(
+      `SELECT a.id FROM attachments a WHERE ${where}
+       ORDER BY ${sortClause(sort)} LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    )
+  ).map((r) => String(r.id));
+  const byId = new Map();
+  for (let i = 0; i < ids.length; i += 500) {
+    const chunk = ids.slice(i, i + 500);
+    const rows = await query(`SELECT ${ATTACHMENT_COLUMNS} FROM attachments a WHERE a.id IN (${chunk.map(() => '?').join(', ')})`, chunk);
+    for (const r of rows) byId.set(String(r.id), r);
+  }
+  return ids.map((id) => byId.get(id)).filter(Boolean);
 }
 
 async function withNames(rows) {
@@ -121,24 +144,20 @@ export function commonHandlers(getScope) {
       };
     },
 
-    getSpaceSummary: async ({ context }) => {
+    getSpaceSummary: async ({ payload, context }) => {
       const scope = await getScope(context);
       if (!scope.spaceId) throw new RequestError('No space in context.');
       if (!(await schemaReady())) return { notReady: true };
-      return computeSummary(await getSettings(), scope.spaceId);
+      if ((await getScanState()).status === 'never') return { notReady: true };
+      const { summary, refreshing } = await requestSummary(scope.spaceId, Boolean(payload?.refresh));
+      return summary ? { ...summary, refreshing } : { pending: true };
     },
 
     listAttachments: async ({ payload, context }) => {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
       const { limit, offset } = paging(payload?.page, payload?.pageSize);
-      const rows = await withNames(
-        await query(
-          `SELECT ${ATTACHMENT_COLUMNS} FROM attachments a WHERE ${where}
-           ORDER BY ${sortClause(payload?.sort)} LIMIT ${limit} OFFSET ${offset}`,
-          params,
-        ),
-      );
+      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, limit, offset));
       const totals = await queryOne(`SELECT COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes FROM attachments a WHERE ${where}`, params);
       const base = (await getState('baseUrl')) || '';
       return { rows: rows.map((r) => mapAttachment(r, base)), total: Number(totals?.n) || 0, totalBytes: Number(totals?.bytes) || 0 };
@@ -147,13 +166,7 @@ export function commonHandlers(getScope) {
     exportAttachments: async ({ payload, context }) => {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
-      const rows = await withNames(
-        await query(
-          `SELECT ${ATTACHMENT_COLUMNS} FROM attachments a WHERE ${where}
-           ORDER BY ${sortClause(payload?.sort)} LIMIT ${EXPORT_LIMIT}`,
-          params,
-        ),
-      );
+      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, EXPORT_LIMIT, 0));
       const base = (await getState('baseUrl')) || '';
       const mapped = rows.map((r) => mapAttachment(r, base));
       const csv = toCsv(mapped, [

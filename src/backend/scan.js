@@ -25,11 +25,12 @@ import { toSqlDate, fromSqlDate } from './lib/time.js';
 import { getSettings, getState, setState } from './settings.js';
 import { scanQueue, WORK_BUDGET_MS } from './queues.js';
 import { auditSafe, AUDIT_EVENTS } from './audit.js';
-import { takeSnapshot } from './summary.js';
+import { takeSnapshot, runSummaryJob } from './summary.js';
 import { applyRetentionRules } from './rules.js';
 
 const STATE_KEY = 'scan:state';
 const SYNC_CHUNK = 1000;
+const SAVE_EVERY_MS = 15000;
 const DUP_CHUNK = 2000;
 const sha1 = (s) => createHash('sha1').update(s).digest('hex');
 const nowSql = () => toSqlDate(new Date());
@@ -88,6 +89,11 @@ export async function cancelScan(actor) {
 
 /** Async event consumer. */
 export async function scanWorker(event) {
+  // The same queue also computes dashboard figures in the background.
+  if (event?.body?.summary) {
+    await runSummaryJob(event.body.summary);
+    return;
+  }
   const scanId = event?.body?.scanId;
   const started = Date.now();
   let state = await getScanState();
@@ -101,10 +107,11 @@ export async function scanWorker(event) {
   }
   const settings = await getSettings();
 
+  // Progress is saved every SAVE_EVERY_MS rather than after every step, to keep
+  // key-value store traffic low on large sites (thousands of steps per scan).
+  // Steps are idempotent, so after a crash at most a few seconds are redone.
+  let lastSave = Date.now();
   while (Date.now() - started < WORK_BUDGET_MS) {
-    // Re-read so a cancel from the UI stops the loop promptly.
-    const latest = await getScanState();
-    if (latest.scanId !== scanId || latest.status !== 'running') return;
     try {
       state = await step(state, settings);
       state.failures = 0;
@@ -133,10 +140,18 @@ export async function scanWorker(event) {
         await new Promise((r) => setTimeout(r, 2000 * state.failures));
       }
     }
-    state.heartbeat = Date.now();
-    await setState(STATE_KEY, state);
-    if (state.status !== 'running') return;
+    if (state.status !== 'running' || Date.now() - lastSave >= SAVE_EVERY_MS) {
+      // Re-read first, so a cancel from the UI is respected and not overwritten.
+      const latest = await getScanState();
+      if (latest.scanId !== scanId || latest.status !== 'running') return;
+      state.heartbeat = Date.now();
+      await setState(STATE_KEY, state);
+      lastSave = Date.now();
+      if (state.status !== 'running') return;
+    }
   }
+  state.heartbeat = Date.now();
+  await setState(STATE_KEY, state);
   await scanQueue.push({ body: { scanId } });
 }
 
@@ -164,6 +179,7 @@ async function step(state, settings) {
     case 'cleanup':
       return stepCleanup(state);
     case 'snapshot': {
+      await setState('summary:epoch', Date.now()); // cached space figures are now out of date
       await takeSnapshot(settings);
       return { ...state, phase: 'rules' };
     }
@@ -215,6 +231,7 @@ async function stepAttachments(state) {
       (a.mediaType || '').slice(0, 255),
       size,
       Number(a.version?.number) || 1,
+      size * Math.max(1, Number(a.version?.number) || 1),
       a.status || 'current',
       containerId ? String(containerId) : null,
       containerKind,
@@ -230,11 +247,11 @@ async function stepAttachments(state) {
   });
   await upsertMany(
     'attachments',
-    ['id', 'title', 'file_ext', 'type_category', 'media_type', 'file_size', 'version_number', 'status', 'container_id',
+    ['id', 'title', 'file_ext', 'type_category', 'media_type', 'file_size', 'version_number', 'stored_bytes', 'status', 'container_id',
       'container_kind', 'created_at', 'modified_at', 'modified_by', 'webui_link', 'download_link', 'dup_key',
       'trashed_seen_at', 'scan_id'],
     rows,
-    ['title', 'file_ext', 'type_category', 'media_type', 'file_size', 'version_number', 'container_id', 'container_kind',
+    ['title', 'file_ext', 'type_category', 'media_type', 'file_size', 'version_number', 'stored_bytes', 'container_id', 'container_kind',
       'created_at', 'modified_at', 'modified_by', 'webui_link', 'download_link', 'dup_key', 'scan_id'],
     {
       // Keep the first time we saw an item in the trash; clear it when restored.
@@ -393,17 +410,20 @@ async function syncAttachmentsOfPages(items, space, pass, analysed) {
     after = String(atts[atts.length - 1].id);
   }
 
+  // Written as multi-row upserts (100 rows per statement) on the primary key.
+  // scan_id 0 is only used if a row vanished meanwhile; such a stub is removed
+  // in the cleanup phase.
+  const rows = [];
   for (const [key, ids] of changes) {
     const [spaceId, status, modified, referenced] = JSON.parse(key);
-    for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500);
-      await exec(
-        `UPDATE attachments SET space_id = ?, container_status = ?, container_modified_at = ?, is_referenced = ?
-         WHERE id IN (${placeholders(chunk.length)})`,
-        [spaceId, status, modified, referenced, ...chunk],
-      );
-    }
+    for (const id of ids) rows.push([id, spaceId, status, modified, referenced, 0]);
   }
+  await upsertMany(
+    'attachments',
+    ['id', 'space_id', 'container_status', 'container_modified_at', 'is_referenced', 'scan_id'],
+    rows,
+    ['space_id', 'container_status', 'container_modified_at', 'is_referenced'],
+  );
 }
 
 /**
@@ -484,13 +504,12 @@ async function stepDups(state) {
       changes.get(key).push(String(m.id));
     }
   }
+  const rowsOut = [];
   for (const [key, ids] of changes) {
     const [count, keep] = key.split('|').map(Number);
-    for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500);
-      await exec(`UPDATE attachments SET dup_count = ?, dup_keep = ? WHERE id IN (${placeholders(chunk.length)})`, [count, keep, ...chunk]);
-    }
+    for (const id of ids) rowsOut.push([id, count, keep, 0]);
   }
+  await upsertMany('attachments', ['id', 'dup_count', 'dup_keep', 'scan_id'], rowsOut, ['dup_count', 'dup_keep']);
   return { ...state, dupCursor: nextCursor };
 }
 

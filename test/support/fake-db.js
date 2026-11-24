@@ -27,7 +27,16 @@ export function createFakeDb() {
         else row[c] = values[vi++];
       }
       const existing = t.get(keyOf(name, row));
-      t.set(keyOf(name, row), existing ? { ...existing, ...row, is_referenced: existing.is_referenced } : row);
+      if (!existing) {
+        t.set(keyOf(name, row), row);
+        continue;
+      }
+      // Like MySQL: on a duplicate key only the listed columns change.
+      const updates = [...query.matchAll(/(\w+) = VALUES\(\1\)/g)].map((x) => x[1]);
+      for (const c of updates) existing[c] = row[c];
+      if ('trashed_seen_at' in row) {
+        existing.trashed_seen_at = row.status === 'trashed' ? existing.trashed_seen_at || row.trashed_seen_at : null;
+      }
     }
     return { rows: { affectedRows: params.length / per } };
   }

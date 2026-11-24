@@ -37,6 +37,13 @@ function gradeAppearance(grade) {
  * Dashboard. `summary` comes from getSummary (site) or getSpaceSummary (space).
  */
 export function Overview({ summary, history = [], onReview, isSite }) {
+  if (summary?.pending) {
+    return (
+      <SectionMessage appearance="information" title="Calculating figures">
+        <Text>The figures are being calculated in the background. On large sites this takes a minute or two; this page updates by itself.</Text>
+      </SectionMessage>
+    );
+  }
   if (!summary || summary.notReady) {
     return (
       <SectionMessage appearance="information" title="No data yet">
@@ -77,6 +84,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
 
   return (
     <Stack space="space.300">
+      {summary.refreshing ? <Text>Updating these figures in the background…</Text> : null}
       <Inline space="space.200" shouldWrap>
         <Kpi
           label="Health score"

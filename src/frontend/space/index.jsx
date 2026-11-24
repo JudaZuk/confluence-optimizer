@@ -31,6 +31,17 @@ function SpaceApp() {
     })();
   }, []);
 
+  // Figures are calculated in the background; poll until they are current.
+  const summaryBusy = Boolean(summary?.pending || summary?.refreshing);
+  useEffect(() => {
+    if (!summaryBusy) return undefined;
+    const timer = setTimeout(async () => {
+      const next = await call('getSpaceSummary').catch(() => null);
+      if (next) setSummary(next);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [summaryBusy, summary]);
+
   if (forbidden) {
     return (
       <SectionMessage appearance="error" title="Space admins only">

@@ -8,6 +8,12 @@
   - cross-page references are resolved a few hundred at a time
   - the attachment list looks up page titles and space keys by id
   - new indexes on `scan_id` make clean-up of old rows cheap
+- Large sites (tested in simulation with 2,550 spaces):
+  - scan progress is saved every 15 seconds instead of after every step (far fewer key-value store writes)
+  - file updates during the scan are written as 100-row upserts instead of one statement per page
+  - Overview and space figures are calculated in the background queue and cached, so pages never wait on them (page requests have a 25-second limit); the page shows "Calculating figures" and updates itself
+  - the space filter lists up to 10,000 spaces (was 2,000)
+- Fixed: the Attachments list hit the same memory limit when sorting all files. It now reads 50 IDs from an index (new `stored_bytes` column) and loads only those rows. Sorting by name was removed because it cannot use an index
 - SQL errors now show the database's own reason (Forge SQL only reports "Unknown SQL execution error" by default), in the UI and in `forge logs`
 - A space whose content keeps failing during a scan is skipped and listed, instead of failing the whole scan
 

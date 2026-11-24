@@ -6,7 +6,8 @@ import { buildAttachmentWhere, STORED_BYTES_SQL, FINDINGS } from './lib/filters.
 import { computeHealth } from './lib/health.js';
 import { daysAgo, monthsAgo, toSqlDate, ageBandSql, ageBandParams, AGE_BANDS } from './lib/time.js';
 import { GB } from '../shared/format.js';
-import { getState, setState } from './settings.js';
+import { getState, setState, deleteState, getSettings } from './settings.js';
+import { scanQueue } from './queues.js';
 
 const num = (v) => Number(v) || 0;
 // No joins on the attachments table: Forge SQL limits each query to 16 MiB,
@@ -290,4 +291,47 @@ export async function getHistory(months = 12) {
     takenAt: r.taken_at, score: num(r.score), totalBytes: num(r.total_bytes),
     reclaimableBytes: num(r.reclaimable_bytes), trashBytes: num(r.trash_bytes), attachments: num(r.attachment_count),
   }));
+}
+
+// ------------------------------------------------------------------ background figures
+//
+// On large sites a summary takes ~20 queries over every file. Page requests have
+// a 25 s limit, so figures are computed by the background queue and cached:
+// the UI gets the cached copy at once, plus a flag while a newer one is made.
+
+const SPACE_SUMMARY_TTL_MS = 6 * 60 * 60 * 1000;
+const PENDING_TTL_MS = 10 * 60 * 1000;
+
+const summaryKey = (spaceId) => (spaceId ? `summary:space:${spaceId}` : 'summary');
+
+/** Returns { summary (or null), refreshing } and queues a recalculation when needed. */
+export async function requestSummary(spaceId = null, force = false) {
+  const key = summaryKey(spaceId);
+  const cached = await getState(key);
+  const epoch = Number(await getState('summary:epoch')) || 0;
+  const computed = cached?.computedAt ? Date.parse(cached.computedAt) : 0;
+  let stale = force || !cached || computed < epoch;
+  if (!spaceId && (await getState('summary:stale'))) stale = true;
+  if (spaceId && Date.now() - computed > SPACE_SUMMARY_TTL_MS) stale = true;
+  if (stale) {
+    const pendingKey = `${key}:pending`;
+    const pending = Number(await getState(pendingKey)) || 0;
+    if (Date.now() - pending > PENDING_TTL_MS) {
+      await setState(pendingKey, Date.now());
+      await scanQueue.push({ body: { summary: spaceId ? String(spaceId) : 'site' } });
+    }
+  }
+  return { summary: cached || null, refreshing: stale };
+}
+
+/** Queue consumer: computes and caches one summary. */
+export async function runSummaryJob(target) {
+  const settings = await getSettings();
+  const spaceId = target === 'site' ? null : String(target);
+  try {
+    if (spaceId) await setState(summaryKey(spaceId), await computeSummary(settings, spaceId));
+    else await takeSnapshot(settings);
+  } finally {
+    await deleteState(`${summaryKey(spaceId)}:pending`);
+  }
 }
