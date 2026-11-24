@@ -6,4 +6,7 @@ export const execQueue = new Queue({ key: 'coam-exec' });
 export const migrateQueue = new Queue({ key: 'coam-migrate' });
 
 /** Time budget for one consumer invocation (function timeout is 900 s). */
-export const WORK_BUDGET_MS = 12 * 60 * 1000;
+// Leaves 5 minutes for a slow last step (API back-off, retries) before the
+// 900 s function limit; a timed-out invocation is retried by Forge from the
+// last saved position.
+export const WORK_BUDGET_MS = 10 * 60 * 1000;

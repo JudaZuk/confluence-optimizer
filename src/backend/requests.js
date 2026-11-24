@@ -63,11 +63,15 @@ async function resolveItems({ action, selection, spaceId, settings, keep }) {
     throw new RequestError('Nothing selected.');
   }
 
+  // Largest first only when there are more matches than fit in one request;
+  // otherwise no ORDER BY (see SORT_IN_CODE_LIMIT in resolvers/common.js).
+  const count = await queryOne(`SELECT COUNT(*) AS n FROM attachments a WHERE ${where} AND ${statusClause}`, [...params, ...statusParams]);
+  const order = Number(count?.n) > MAX_ITEMS_PER_REQUEST ? 'ORDER BY a.stored_bytes DESC' : '';
   const rows = await query(
     `SELECT a.id, a.title, a.space_id, a.version_number, ${bytesExpr} AS bytes
      FROM attachments a
      WHERE ${where} AND ${statusClause}
-     ORDER BY a.stored_bytes DESC LIMIT ${MAX_ITEMS_PER_REQUEST}`,
+     ${order} LIMIT ${MAX_ITEMS_PER_REQUEST}`,
     [...bytesParams, ...params, ...statusParams],
   );
   return rows.map((r) => ({ id: r.id, kind: 'attachment', title: r.title, spaceId: r.space_id, bytes: Number(r.bytes) || 0, version: r.version_number }));

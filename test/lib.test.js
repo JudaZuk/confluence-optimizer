@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileExtension, typeCategory, baseName } from '../src/backend/lib/files.js';
 import { computeHealth, gradeFor, describeMonths } from '../src/backend/lib/health.js';
-import { buildAttachmentWhere, sortClause, paging } from '../src/backend/lib/filters.js';
+import { buildAttachmentWhere, sortClause, paging, sortRows, sortSpec } from '../src/backend/lib/filters.js';
 import { toCsv } from '../src/backend/lib/csv.js';
 import { toSqlDate, fromSqlDate, ageBand, daysAgo } from '../src/backend/lib/time.js';
 import { formatBytes, countOf } from '../src/shared/format.js';
@@ -105,4 +105,16 @@ test('byte formatting', () => {
   assert.equal(countOf(1, 'page'), '1 page');
   assert.equal(countOf(3, 'page'), '3 pages');
   assert.equal(countOf(1204, 'file'), '1,204 files');
+});
+
+test('small result sets are sorted in code like the database would', () => {
+  const rows = [
+    { id: 'b', version_number: 2, stored_bytes: '10', modified_at: '2024-01-02 00:00:00' },
+    { id: 'a', version_number: 2, stored_bytes: '900', modified_at: null },
+    { id: 'c', version_number: 7, stored_bytes: '50', modified_at: '2023-05-01 00:00:00' },
+  ];
+  assert.deepEqual(sortRows(rows, sortSpec('versions_desc')).map((r) => r.id), ['c', 'a', 'b'], 'ties broken by id');
+  assert.deepEqual(sortRows(rows, sortSpec('size_desc')).map((r) => r.id), ['a', 'c', 'b'], 'numbers, not text');
+  assert.deepEqual(sortRows(rows, sortSpec('modified_asc')).map((r) => r.id), ['c', 'b', 'a'], 'nulls last');
+  assert.deepEqual(sortRows(rows, sortSpec('nonsense')).map((r) => r.id), ['a', 'c', 'b'], 'unknown sort = largest first');
 });

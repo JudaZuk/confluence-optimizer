@@ -212,6 +212,8 @@ test('space admins are scoped to their space and cannot approve', async () => {
   assert.equal(status.scope.isAdmin, false);
   const list = await call(app.spaceResolver, 'listAttachments', { filters: { spaceId: '999' } }, ctx);
   assert.equal(list.error, undefined);
+  const listQuery = forge.sqlLog.filter((l) => l.query.startsWith('SELECT a.id, a.')).at(-1);
+  assert.ok(listQuery && !/ORDER BY/.test(listQuery.query), 'few matches: IDs fetched unsorted and sorted in code');
   const lastSelect = forge.sqlLog.filter((l) => l.query.includes('FROM attachments a')).at(-1);
   assert.equal(lastSelect.params[0], '100', 'space scope comes from context, not from the payload');
   assert.equal(app.spaceResolver.defs.decideRequest, undefined, 'no approve endpoint in the space resolver');

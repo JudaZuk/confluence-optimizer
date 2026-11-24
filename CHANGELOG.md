@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 – 2026-11-24
+
+- Fixed: the Attachments list could hit the memory limit when filters matched only a few files (for example unused images over 20 MB, sorted by versions). Up to 5,000 matches are now fetched unsorted and sorted in code; larger result sets still use the index
+- "Move all matching" requests use the same approach
+- Background steps stop after 10 minutes instead of 12, leaving room for slow API back-off before Forge's 15-minute limit
+
 ## 0.1.3 – 2026-11-24
 
 - Database setup runs one at a time (a lock in the key-value store) and only from the setup queue; the scan waits for it instead of changing the database itself. Parallel setups made an index build fail. Failed steps are retried and the database's reason is logged

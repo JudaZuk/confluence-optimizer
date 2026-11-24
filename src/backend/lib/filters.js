@@ -28,6 +28,42 @@ export const SORTS = {
   versions_desc: 'a.version_number DESC',
 };
 
+/** Column and direction of each sort, for sorting small result sets in code. */
+export const SORT_SPECS = {
+  size_desc: { column: 'stored_bytes', desc: true },
+  size_asc: { column: 'stored_bytes', desc: false },
+  modified_asc: { column: 'modified_at', desc: false },
+  modified_desc: { column: 'modified_at', desc: true },
+  versions_desc: { column: 'version_number', desc: true },
+};
+
+export function sortSpec(sort) {
+  return SORT_SPECS[sort] || SORT_SPECS.size_desc;
+}
+
+/**
+ * Sorts rows like ORDER BY <column> [DESC], id. Numbers compare as numbers,
+ * dates as their 'YYYY-MM-DD HH:MM:SS' text (which sorts correctly).
+ */
+export function sortRows(rows, spec) {
+  const val = (r) => {
+    const v = r[spec.column];
+    if (v === null || v === undefined) return null;
+    return spec.column === 'modified_at' ? String(v) : Number(v);
+  };
+  return [...rows].sort((x, y) => {
+    const a = val(x);
+    const b = val(y);
+    if (a !== b) {
+      if (a === null) return 1; // nulls last
+      if (b === null) return -1;
+      const cmp = a < b ? -1 : 1;
+      return spec.desc ? -cmp : cmp;
+    }
+    return String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0;
+  });
+}
+
 /** Storage an attachment takes, including (estimated) earlier versions. */
 export const STORED_BYTES_SQL = 'a.file_size * GREATEST(a.version_number, 1)';
 

@@ -2,7 +2,7 @@
 // `scope` is decided on the server from the module context, never by the UI.
 
 import { query, queryOne } from '../db/sql.js';
-import { buildAttachmentWhere, sortClause, paging, STORED_BYTES_SQL } from '../lib/filters.js';
+import { buildAttachmentWhere, sortClause, sortSpec, sortRows, paging, STORED_BYTES_SQL } from '../lib/filters.js';
 import { toCsv } from '../lib/csv.js';
 import { getSettings, getState, setState, deleteState } from '../settings.js';
 import { getScanState } from '../scan.js';
@@ -82,14 +82,29 @@ async function lookupByIds(table, column, ids) {
  * (sorting full rows of a large table exceeded Forge SQL's 16 MiB per-query
  * memory limit). Step 2 fetches the full rows for those ids only.
  */
-async function pageOfAttachments(where, params, sort, limit, offset) {
-  const ids = (
-    await query(
-      `SELECT a.id FROM attachments a WHERE ${where}
-       ORDER BY ${sortClause(sort)} LIMIT ${limit} OFFSET ${offset}`,
-      params,
-    )
-  ).map((r) => String(r.id));
+// Up to this many matches, the list fetches the matching IDs unsorted and sorts
+// them in code. With few matches, an ORDER BY makes the database walk the sort
+// index through every file to find them, which can exceed the memory limit.
+// With many matches, the index walk finds a page of results quickly.
+export const SORT_IN_CODE_LIMIT = 5000;
+
+async function pageOfAttachments(where, params, sort, limit, offset, total) {
+  let ids;
+  if (total <= SORT_IN_CODE_LIMIT) {
+    const spec = sortSpec(sort);
+    const keys = await query(`SELECT a.id, a.${spec.column} FROM attachments a WHERE ${where} LIMIT ${SORT_IN_CODE_LIMIT + 1}`, params);
+    ids = sortRows(keys, spec)
+      .slice(offset, offset + limit)
+      .map((r) => String(r.id));
+  } else {
+    ids = (
+      await query(
+        `SELECT a.id FROM attachments a WHERE ${where}
+         ORDER BY ${sortClause(sort)} LIMIT ${limit} OFFSET ${offset}`,
+        params,
+      )
+    ).map((r) => String(r.id));
+  }
   const byId = new Map();
   for (let i = 0; i < ids.length; i += 500) {
     const chunk = ids.slice(i, i + 500);
@@ -174,8 +189,8 @@ export function commonHandlers(getScope) {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
       const { limit, offset } = paging(payload?.page, payload?.pageSize);
-      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, limit, offset));
       const totals = await queryOne(`SELECT COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes FROM attachments a WHERE ${where}`, params);
+      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, limit, offset, Number(totals?.n) || 0));
       const base = (await getState('baseUrl')) || '';
       return { rows: rows.map((r) => mapAttachment(r, base)), total: Number(totals?.n) || 0, totalBytes: Number(totals?.bytes) || 0 };
     },
@@ -183,7 +198,8 @@ export function commonHandlers(getScope) {
     exportAttachments: async ({ payload, context }) => {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
-      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, EXPORT_LIMIT, 0));
+      const count = await queryOne(`SELECT COUNT(*) AS n FROM attachments a WHERE ${where}`, params);
+      const rows = await withNames(await pageOfAttachments(where, params, payload?.sort, EXPORT_LIMIT, 0, Number(count?.n) || 0));
       const base = (await getState('baseUrl')) || '';
       const mapped = rows.map((r) => mapAttachment(r, base));
       const csv = toCsv(mapped, [
