@@ -7,8 +7,8 @@ const PHASE_LABELS = {
   spaces: 'Listing spaces',
   attachments: 'Listing attachments',
   content: 'Reading pages and checking references',
-  finalize: 'Linking files to pages',
-  missing: 'Checking for files on missing pages',
+  finalize: 'Resolving links between pages',
+  dups: 'Looking for duplicate files',
   cleanup: 'Removing deleted items from the index',
   snapshot: 'Calculating the health score',
   rules: 'Applying retention rules',
@@ -43,7 +43,14 @@ export function ScanStatus({ scan, isAdmin, onStart, onCancel }) {
           </Text>
         ) : null}
         {scan?.status === 'done' && c.skippedSpaces ? (
-          <Text>{`${countOf(c.skippedSpaces, 'space')} could not be read by the app (restricted) and ${c.skippedSpaces === 1 ? 'was' : 'were'} skipped.`}</Text>
+          <SectionMessage appearance="warning">
+            <Stack space="space.050">
+              <Text>{`${countOf(c.skippedSpaces, 'space')} could not be scanned and ${c.skippedSpaces === 1 ? 'was' : 'were'} skipped. Results for ${c.skippedSpaces === 1 ? 'it' : 'them'} may be incomplete.`}</Text>
+              {(scan.skipped || []).slice(0, 10).map((s) => (
+                <Text key={s.space}>{`${s.space}: ${s.error}`}</Text>
+              ))}
+            </Stack>
+          </SectionMessage>
         ) : null}
         {scan?.status === 'failed' ? (
           <SectionMessage appearance="error"><Text>{scan.error || scan.lastError}</Text></SectionMessage>

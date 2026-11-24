@@ -50,11 +50,13 @@ The scan is a chain of async events. Each invocation works for up to 12 minutes 
 | spaces | `GET /wiki/api/v2/spaces` (default and archived) | `spaces` |
 | attachments | `GET /wiki/api/v2/attachments?status=current,archived,trashed` (250 per call, site-wide) | `attachments` |
 | content | per space: `GET /spaces/{id}/pages` and `/blogposts` with `body-format=storage` (50 per call), then trashed ones | `contents`, `attachment_refs`, `attachments.is_referenced` |
-| finalize | SQL only, per space | space ids, resolved cross-page references |
-| missing | SQL only | `orphan_reason = container_missing` |
+| finalize | SQL only, per space, 200 references at a time | resolved cross-page references, `is_referenced` |
+| dups | SQL only, walks the `dup_key` index in chunks of 2,000 | `dup_count`, `dup_keep` |
 | cleanup | SQL only | deletes rows not seen in this scan |
 | snapshot | SQL only | KVS `summary`, `health_snapshots` |
 | rules | SQL only | pending `requests` |
+
+Every statement works on a bounded number of rows: Forge SQL cancels any single query that uses more than 16 MiB of memory (TiDB error 8175), so no query joins or groups the whole attachments table. The page's status and last change are copied onto each file during the content phase for that reason.
 
 Rows carry the `scan_id` that last saw them; cleanup removes older rows only when the phase that writes them completed fully, so a partial scan never deletes valid data.
 

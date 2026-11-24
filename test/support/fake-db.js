@@ -42,6 +42,32 @@ export function createFakeDb() {
         .sort((a, b) => String(a.id).localeCompare(String(b.id)));
       return { rows: rows.slice(0, 1) };
     }
+    if (q.startsWith('SELECT id, title, container_id, is_referenced, space_id, container_status, container_modified_at FROM attachments WHERE container_id IN')) {
+      const after = params[params.length - 1];
+      const ids = params.slice(0, -1);
+      const rows = [...table('attachments').values()]
+        .filter((r) => ids.includes(r.container_id) && String(r.id) > String(after))
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      return { rows: rows.slice(0, 1000) };
+    }
+    if (q.startsWith('UPDATE attachments SET space_id = ?, container_status = ?, container_modified_at = ?, is_referenced = ?')) {
+      const [spaceId, status, modified, referenced, ...ids] = params;
+      for (const r of table('attachments').values()) {
+        if (ids.includes(r.id)) Object.assign(r, { space_id: spaceId, container_status: status, container_modified_at: modified, is_referenced: referenced });
+      }
+      return { rows: { affectedRows: ids.length } };
+    }
+    if (q.startsWith('SELECT id, dup_key, status, dup_count, dup_keep FROM attachments')) {
+      const rows = [...table('attachments').values()]
+        .filter((r) => String(r.dup_key) > String(params[0]))
+        .sort((a, b) => String(a.dup_key).localeCompare(String(b.dup_key)));
+      return { rows: rows.slice(0, 2000) };
+    }
+    if (q.startsWith('UPDATE attachments SET dup_count = ?, dup_keep = ?')) {
+      const [count, keep, ...ids] = params;
+      for (const r of table('attachments').values()) if (ids.includes(r.id)) Object.assign(r, { dup_count: count, dup_keep: keep });
+      return { rows: { affectedRows: ids.length } };
+    }
     if (q.startsWith('SELECT id, title, container_id FROM attachments WHERE container_id IN')) {
       return { rows: [...table('attachments').values()].filter((r) => params.includes(r.container_id)) };
     }

@@ -65,7 +65,7 @@ async function resolveItems({ action, selection, spaceId, settings, keep }) {
 
   const rows = await query(
     `SELECT a.id, a.title, a.space_id, a.version_number, ${bytesExpr} AS bytes
-     FROM attachments a LEFT JOIN contents c ON c.id = a.container_id
+     FROM attachments a
      WHERE ${where} AND ${statusClause}
      ORDER BY a.file_size DESC LIMIT ${MAX_ITEMS_PER_REQUEST}`,
     [...bytesParams, ...params, ...statusParams],

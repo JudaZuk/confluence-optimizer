@@ -9,6 +9,22 @@ function isRetryable(err) {
   return text.includes('RATE') || text.includes('TOO_MANY') || text.includes('429') || text.includes('TIMEOUT');
 }
 
+/**
+ * Forge SQL puts the database's own reason in `context.debug` and only a generic
+ * "Unknown SQL execution error" in `message`. Surface the real reason, plus the
+ * start of the statement, so failures are diagnosable from the UI and the logs.
+ */
+function explain(err, query) {
+  const debug = err?.context?.debug || err?.debug || {};
+  const reason = [debug.code, debug.message].filter(Boolean).join(': ');
+  const detail = reason ? ` (${reason})` : err?.code ? ` (${err.code})` : '';
+  const wrapped = new Error(`${err?.message || 'SQL error'}${detail} in: ${String(query).replace(/\s+/g, ' ').slice(0, 120)}`);
+  wrapped.cause = err;
+  wrapped.code = err?.code;
+  wrapped.debug = debug;
+  return wrapped;
+}
+
 async function run(query, params) {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -16,7 +32,11 @@ async function run(query, params) {
       if (params && params.length) stmt = stmt.bindParams(...params);
       return await stmt.execute();
     } catch (err) {
-      if (attempt >= 3 || !isRetryable(err)) throw err;
+      if (attempt >= 3 || !isRetryable(err)) {
+        const wrapped = explain(err, query);
+        console.error('SQL failed', wrapped.message, JSON.stringify(wrapped.debug).slice(0, 2000));
+        throw wrapped;
+      }
       await sleep(500 * 2 ** attempt);
     }
   }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2 – 2026-11-24
+
+- Fixed: scans on large sites failed with "Unknown SQL execution error" (TiDB error 8175, query over Forge SQL's per-query memory limit). The scan and all reports now work in small chunks and never join or group the whole attachments table:
+  - page status, last change and space are copied onto each file during the scan
+  - probable duplicates are flagged during the scan (new "dups" phase) instead of grouped at query time
+  - cross-page references are resolved a few hundred at a time
+  - the attachment list looks up page titles and space keys by id
+  - new indexes on `scan_id` make clean-up of old rows cheap
+- SQL errors now show the database's own reason (Forge SQL only reports "Unknown SQL execution error" by default), in the UI and in `forge logs`
+- A space whose content keeps failing during a scan is skipped and listed, instead of failing the whole scan
+
 ## 0.1.1 – 2026-11-23
 
 Fixes from the first test on a developer site:

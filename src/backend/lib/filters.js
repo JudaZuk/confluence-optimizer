@@ -41,7 +41,7 @@ const placeholders = (n) => Array.from({ length: n }, () => '?').join(', ');
 /**
  * @param {object} filters   user filters from the UI
  * @param {object} options   { spaceId (forced scope), rules, exemptSpaceIds, now }
- * @returns {{ where: string, params: any[] }}  conditions for `attachments a LEFT JOIN contents c`
+ * @returns {{ where: string, params: any[] }}  conditions on `attachments a` alone (no joins: see summary.js)
  */
 export function buildAttachmentWhere(filters = {}, options = {}) {
   const rules = { ...DEFAULT_RULES, ...(options.rules || {}) };
@@ -61,23 +61,20 @@ export function buildAttachmentWhere(filters = {}, options = {}) {
 
   // Status filter (ignored by findings that imply a status).
   if (finding === 'all') {
-    if (filters.status === 'trashed') add("(a.status = 'trashed' OR c.status = 'trashed')");
+    if (filters.status === 'trashed') add("(a.status = 'trashed' OR a.container_status = 'trashed')");
     else if (filters.status !== 'any') add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);
   }
 
   switch (finding) {
     case 'unused':
       add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);
-      add("c.status IN ('current', 'archived')");
+      add("a.container_status IN ('current', 'archived')");
       add('a.is_referenced = 0');
       add('a.modified_at < ?', daysAgo(rules.unusedMinAgeDays, now));
       break;
     case 'duplicates':
       add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);
-      add(
-        "a.dup_key IN (SELECT d.dup_key FROM attachments d WHERE d.status IN ('current', 'archived') " +
-          'GROUP BY d.dup_key HAVING COUNT(*) > 1)',
-      );
+      add('a.dup_count > 1');
       break;
     case 'versions':
       add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);
@@ -85,14 +82,14 @@ export function buildAttachmentWhere(filters = {}, options = {}) {
       break;
     case 'stale':
       add(`a.status IN (${placeholders(LIVE_STATUSES.length)})`, ...LIVE_STATUSES);
-      add('c.modified_at < ?', monthsAgo(rules.staleMonths, now));
+      add('a.container_modified_at < ?', monthsAgo(rules.staleMonths, now));
       break;
     case 'large':
       add("a.status <> 'trashed'");
       add('a.file_size >= ?', Math.round(Number(rules.largeFileMb) * 1024 * 1024));
       break;
     case 'trash':
-      add("(a.status = 'trashed' OR c.status = 'trashed')");
+      add("(a.status = 'trashed' OR a.container_status = 'trashed')");
       break;
     default:
       break;

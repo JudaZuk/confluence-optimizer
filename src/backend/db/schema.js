@@ -171,6 +171,16 @@ export const MIGRATIONS = [
       KEY idx_snap_taken (taken_at)
     )`,
   ],
+  // v0.1.2: per-file copies of the page's status and last change, and duplicate
+  // flags computed during the scan, so no query has to join or group the whole
+  // attachments table (Forge SQL limits each query to 16 MiB of memory).
+  ['v009_att_container_status', 'ALTER TABLE attachments ADD COLUMN IF NOT EXISTS container_status VARCHAR(16) NULL'],
+  ['v010_att_container_modified', 'ALTER TABLE attachments ADD COLUMN IF NOT EXISTS container_modified_at DATETIME NULL'],
+  ['v011_att_dup_count', 'ALTER TABLE attachments ADD COLUMN IF NOT EXISTS dup_count INT NOT NULL DEFAULT 1'],
+  ['v012_att_dup_keep', 'ALTER TABLE attachments ADD COLUMN IF NOT EXISTS dup_keep TINYINT NOT NULL DEFAULT 1'],
+  ['v013_att_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_att_scan ON attachments (scan_id)'],
+  ['v014_contents_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_contents_scan ON contents (scan_id)'],
+  ['v015_refs_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_refs_scan ON attachment_refs (scan_id)'],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1][0];

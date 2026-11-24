@@ -9,7 +9,9 @@ import { GB } from '../shared/format.js';
 import { getState, setState } from './settings.js';
 
 const num = (v) => Number(v) || 0;
-const FROM = 'FROM attachments a LEFT JOIN contents c ON c.id = a.container_id';
+// No joins on the attachments table: Forge SQL limits each query to 16 MiB,
+// and a join or GROUP BY over every file can exceed that on large sites.
+const FROM = 'FROM attachments a';
 
 export async function exemptSpaceIds(settings) {
   const keys = settings.exemptSpaceKeys || [];
@@ -51,7 +53,7 @@ export async function computeSummary(settings, spaceId = null) {
   );
   const trash = await queryOne(
     `SELECT COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes ${FROM}
-     WHERE ${spaceWhere} AND (a.status = 'trashed' OR c.status = 'trashed')`,
+     WHERE ${spaceWhere} AND (a.status = 'trashed' OR a.container_status = 'trashed')`,
     sp,
   );
   const trashedPages = await queryOne(
@@ -75,10 +77,8 @@ export async function computeSummary(settings, spaceId = null) {
   }
   // Duplicates: only the extra copies can be reclaimed.
   const dupExtra = await queryOne(
-    `SELECT SUM((t.n - 1) * t.size) AS bytes FROM (
-       SELECT a.dup_key, COUNT(*) AS n, MAX(a.file_size) AS size FROM attachments a
-       WHERE ${spaceWhere} AND a.status IN ('current', 'archived') GROUP BY a.dup_key HAVING COUNT(*) > 1
-     ) t`,
+    `SELECT SUM(${STORED_BYTES_SQL}) AS bytes FROM attachments a
+     WHERE ${spaceWhere} AND a.status IN ('current', 'archived') AND a.dup_count > 1 AND a.dup_keep = 0`,
     sp,
   );
   findings.duplicates.reclaimableBytes = num(dupExtra?.bytes);
@@ -155,7 +155,7 @@ export async function computeSummary(settings, spaceId = null) {
  * in the first bucket that applies, so overlapping findings are not added twice:
  *   1. in the trash (or on a page in the trash)  -> all its storage
  *   2. unused                                     -> all its storage
- *   3. an extra copy of a probable duplicate      -> all its storage
+ *   3. an extra copy of a probable duplicate      -> all its storage (flags set by the scan)
  *   4. more versions than you keep               -> the old versions only
  */
 async function reclaimableTotal(settings, spaceId, exempt, now) {
@@ -164,20 +164,14 @@ async function reclaimableTotal(settings, spaceId, exempt, now) {
   const exemptSql = exempt.length ? ` AND (a.space_id IS NULL OR a.space_id NOT IN (${exempt.map(() => '?').join(', ')}))` : '';
   const row = await queryOne(
     `SELECT SUM(CASE
-         WHEN a.status = 'trashed' OR c.status = 'trashed' THEN ${STORED_BYTES_SQL}
-         WHEN a.is_referenced = 0 AND c.status IN ('current', 'archived') AND a.modified_at < ? THEN ${STORED_BYTES_SQL}
-         WHEN d.keep_id IS NOT NULL THEN ${STORED_BYTES_SQL}
+         WHEN a.status = 'trashed' OR a.container_status = 'trashed' THEN ${STORED_BYTES_SQL}
+         WHEN a.is_referenced = 0 AND a.container_status IN ('current', 'archived') AND a.modified_at < ? THEN ${STORED_BYTES_SQL}
+         WHEN a.dup_count > 1 AND a.dup_keep = 0 AND a.status IN ('current', 'archived') THEN ${STORED_BYTES_SQL}
          WHEN a.version_number > ? THEN a.file_size * (a.version_number - ?)
          ELSE 0 END) AS bytes
      FROM attachments a
-       LEFT JOIN contents c ON c.id = a.container_id
-       LEFT JOIN (
-         SELECT x.dup_key, MIN(x.id) AS keep_id FROM attachments x
-         WHERE x.status IN ('current', 'archived')${spaceId ? ' AND x.space_id = ?' : ''}
-         GROUP BY x.dup_key HAVING COUNT(*) > 1
-       ) d ON d.dup_key = a.dup_key AND a.id <> d.keep_id AND a.status IN ('current', 'archived')
      WHERE ${spaceId ? 'a.space_id = ?' : '1 = 1'}${exemptSql}`,
-    [daysAgo(settings.unusedMinAgeDays, now), keep, keep, ...sp, ...sp, ...exempt],
+    [daysAgo(settings.unusedMinAgeDays, now), keep, keep, ...sp, ...exempt],
   );
   return num(row?.bytes);
 }
@@ -187,7 +181,7 @@ export async function computeTrashReport(spaceId = null) {
   const now = new Date();
   const spaceWhere = spaceId ? 'a.space_id = ?' : '1 = 1';
   const sp = spaceId ? [String(spaceId)] : [];
-  const trashed = "(a.status = 'trashed' OR c.status = 'trashed')";
+  const trashed = "(a.status = 'trashed' OR a.container_status = 'trashed')";
 
   const bySpace = spaceId
     ? []
@@ -209,17 +203,48 @@ export async function computeTrashReport(spaceId = null) {
      ) t GROUP BY t.band`,
     [...ageBandParams(now), ...sp],
   );
-  const pages = await query(
-    `SELECT c.id, c.kind, c.title, c.space_id, s.space_key, c.modified_at, c.trashed_seen_at,
-            COUNT(x.id) AS att_count, COALESCE(SUM(x.file_size * GREATEST(x.version_number, 1)), 0) AS att_bytes
-     FROM contents c
-       LEFT JOIN spaces s ON s.id = c.space_id
-       LEFT JOIN attachments x ON x.container_id = c.id
-     WHERE c.status = 'trashed'${spaceId ? ' AND c.space_id = ?' : ''}
-     GROUP BY c.id, c.kind, c.title, c.space_id, s.space_key, c.modified_at, c.trashed_seen_at
-     ORDER BY att_bytes DESC LIMIT 200`,
+  // Trashed pages, largest attachment storage first. Aggregated from the
+  // attachments side (only files on trashed pages), then the page details are
+  // fetched by id, so no query touches every page or every file.
+  const sizes = await query(
+    `SELECT a.container_id, COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes
+     FROM attachments a WHERE a.container_status = 'trashed'${spaceId ? ' AND a.space_id = ?' : ''}
+     GROUP BY a.container_id ORDER BY bytes DESC LIMIT 200`,
     sp,
   );
+  const sizeById = new Map(sizes.map((r) => [String(r.container_id), r]));
+  let pageRows = sizes.length
+    ? await query(
+        `SELECT c.id, c.kind, c.title, c.space_id, c.modified_at, c.trashed_seen_at FROM contents c
+         WHERE c.id IN (${sizes.map(() => '?').join(', ')})`,
+        sizes.map((r) => String(r.container_id)),
+      )
+    : [];
+  if (pageRows.length < 200) {
+    const known = pageRows.map((r) => String(r.id));
+    const extra = await query(
+      `SELECT c.id, c.kind, c.title, c.space_id, c.modified_at, c.trashed_seen_at FROM contents c
+       WHERE c.status = 'trashed'${spaceId ? ' AND c.space_id = ?' : ''}${known.length ? ` AND c.id NOT IN (${known.map(() => '?').join(', ')})` : ''}
+       LIMIT ${200 - pageRows.length}`,
+      [...sp, ...known],
+    );
+    pageRows = [...pageRows, ...extra];
+  }
+  const spaceIds = [...new Set(pageRows.map((r) => String(r.space_id)).filter(Boolean))];
+  const spaceKeys = new Map(
+    (spaceIds.length
+      ? await query(`SELECT id, space_key FROM spaces WHERE id IN (${spaceIds.map(() => '?').join(', ')})`, spaceIds)
+      : []
+    ).map((r) => [String(r.id), r.space_key]),
+  );
+  const pages = pageRows
+    .map((p) => ({
+      ...p,
+      space_key: spaceKeys.get(String(p.space_id)) || null,
+      att_count: sizeById.get(String(p.id))?.n || 0,
+      att_bytes: sizeById.get(String(p.id))?.bytes || 0,
+    }))
+    .sort((a, b) => num(b.att_bytes) - num(a.att_bytes));
   const ageMap = new Map(byAge.map((r) => [r.band, r]));
   return {
     bySpace: bySpace.map((r) => ({ spaceId: r.space_id, key: r.space_key || '(unknown)', name: r.name || '', count: num(r.n), bytes: num(r.bytes) })),

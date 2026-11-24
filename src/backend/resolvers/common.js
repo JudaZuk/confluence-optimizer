@@ -40,14 +40,30 @@ export async function schemaReady() {
   return false;
 }
 
+// The list reads attachments only; page titles and space keys are looked up by
+// id afterwards. A join against every page could exceed Forge SQL's 16 MiB
+// per-query memory limit on large sites.
 const ATTACHMENT_COLUMNS = `a.id, a.title, a.type_category, a.media_type, a.file_size, a.version_number,
   ${STORED_BYTES_SQL} AS stored_bytes, a.status, a.created_at, a.modified_at, a.modified_by,
-  a.webui_link, a.download_link, a.is_referenced, a.orphan_reason, a.space_id, s.space_key,
-  c.title AS container_title, c.status AS container_status, c.modified_at AS container_modified_at`;
+  a.webui_link, a.download_link, a.is_referenced, a.orphan_reason, a.space_id, a.container_id,
+  a.container_status, a.container_modified_at`;
 
-const ATTACHMENT_FROM = `FROM attachments a
-  LEFT JOIN contents c ON c.id = a.container_id
-  LEFT JOIN spaces s ON s.id = a.space_id`;
+async function lookupByIds(table, column, ids) {
+  const unique = [...new Set(ids.filter(Boolean).map(String))];
+  const out = new Map();
+  for (let i = 0; i < unique.length; i += 500) {
+    const chunk = unique.slice(i, i + 500);
+    const rows = await query(`SELECT id, ${column} AS v FROM ${table} WHERE id IN (${chunk.map(() => '?').join(', ')})`, chunk);
+    for (const r of rows) out.set(String(r.id), r.v);
+  }
+  return out;
+}
+
+async function withNames(rows) {
+  const titles = await lookupByIds('contents', 'title', rows.map((r) => r.container_id));
+  const keys = await lookupByIds('spaces', 'space_key', rows.map((r) => r.space_id));
+  return rows.map((r) => ({ ...r, container_title: titles.get(String(r.container_id)) || null, space_key: keys.get(String(r.space_id)) || null }));
+}
 
 async function attachmentQuery(scope, filters) {
   const settings = await getSettings();
@@ -116,16 +132,14 @@ export function commonHandlers(getScope) {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
       const { limit, offset } = paging(payload?.page, payload?.pageSize);
-      const rows = await query(
-        `SELECT ${ATTACHMENT_COLUMNS} ${ATTACHMENT_FROM} WHERE ${where}
-         ORDER BY ${sortClause(payload?.sort)} LIMIT ${limit} OFFSET ${offset}`,
-        params,
+      const rows = await withNames(
+        await query(
+          `SELECT ${ATTACHMENT_COLUMNS} FROM attachments a WHERE ${where}
+           ORDER BY ${sortClause(payload?.sort)} LIMIT ${limit} OFFSET ${offset}`,
+          params,
+        ),
       );
-      const totals = await queryOne(
-        `SELECT COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes FROM attachments a
-         LEFT JOIN contents c ON c.id = a.container_id WHERE ${where}`,
-        params,
-      );
+      const totals = await queryOne(`SELECT COUNT(*) AS n, SUM(${STORED_BYTES_SQL}) AS bytes FROM attachments a WHERE ${where}`, params);
       const base = (await getState('baseUrl')) || '';
       return { rows: rows.map((r) => mapAttachment(r, base)), total: Number(totals?.n) || 0, totalBytes: Number(totals?.bytes) || 0 };
     },
@@ -133,10 +147,12 @@ export function commonHandlers(getScope) {
     exportAttachments: async ({ payload, context }) => {
       const scope = await getScope(context);
       const { where, params } = await attachmentQuery(scope, payload?.filters);
-      const rows = await query(
-        `SELECT ${ATTACHMENT_COLUMNS} ${ATTACHMENT_FROM} WHERE ${where}
-         ORDER BY ${sortClause(payload?.sort)} LIMIT ${EXPORT_LIMIT}`,
-        params,
+      const rows = await withNames(
+        await query(
+          `SELECT ${ATTACHMENT_COLUMNS} FROM attachments a WHERE ${where}
+           ORDER BY ${sortClause(payload?.sort)} LIMIT ${EXPORT_LIMIT}`,
+          params,
+        ),
       );
       const base = (await getState('baseUrl')) || '';
       const mapped = rows.map((r) => mapAttachment(r, base));

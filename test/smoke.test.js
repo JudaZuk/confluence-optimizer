@@ -31,7 +31,7 @@ const site = {
     att('att3', 'shared.pdf', '2'),
     att('att4', 'old.pdf', '1', { status: 'trashed' }),
   ],
-  attachmentsPage2: [att('att5', 'lost.docx', '999')],
+  attachmentsPage2: [att('att5', 'lost.docx', '999'), att('att6', 'used.png', '2', { mediaType: 'image/png' })],
   pages: [
     {
       id: '1', title: 'One', spaceId: '100', status: 'current', createdAt: '2020-01-01T00:00:00Z',
@@ -66,7 +66,7 @@ forge.confluence = async (path, options) => {
   }
   if (p === '/wiki/api/v2/spaces') {
     const archived = url.searchParams.get('status') === 'archived';
-    return { status: 200, body: { results: archived ? [] : site.spaces, _links: { base: BASE } } };
+    return { status: 200, body: { results: archived ? [] : [...site.spaces, ...(site.extraSpaces || [])], _links: { base: BASE } } };
   }
   if (p === '/wiki/api/v2/attachments') {
     assert.equal(url.searchParams.get('status'), 'current,archived,trashed');
@@ -80,6 +80,9 @@ forge.confluence = async (path, options) => {
     return { status: 200, body: { results: site.pages } };
   }
   if (p === '/wiki/api/v2/spaces/100/blogposts') return { status: 200, body: { results: [] } };
+  if (p === '/wiki/api/v2/spaces/200/pages' || p === '/wiki/api/v2/spaces/200/blogposts') {
+    return { status: 200, body: { results: [{ id: '201', title: 'Bad', spaceId: '200', status: 'current', body: { storage: { value: '' } } }] } };
+  }
   if (p === '/wiki/api/v2/attachments/att2' && method === 'GET') {
     return { status: 200, body: { ...site.attachmentsPage1[1] } };
   }
@@ -120,7 +123,7 @@ test('a full scan indexes the site and analyses references', async () => {
 
   const state = forge.kv.get('scan:state');
   assert.equal(state.status, 'done', JSON.stringify(state));
-  assert.equal(state.counters.attachments, 5);
+  assert.equal(state.counters.attachments, 6);
   assert.equal(state.counters.pages, 2);
 
   const atts = db.table('attachments');
@@ -128,6 +131,14 @@ test('a full scan indexes the site and analyses references', async () => {
   assert.equal(atts.get('att2').is_referenced, 0, 'zip not referenced anywhere is unused');
   assert.equal(atts.get('att1').type_category, 'image');
   assert.ok(atts.get('att4').trashed_seen_at, 'trashed attachment gets a first-seen time');
+  assert.equal(atts.get('att1').space_id, '100', 'space copied from the page');
+  assert.equal(atts.get('att1').container_status, 'current', 'page status copied to the file');
+  assert.equal(atts.get('att6').dup_count, 2, 'same name and size on two pages');
+  assert.equal(atts.get('att1').dup_keep, 1, 'lowest id is the copy kept');
+  assert.equal(atts.get('att6').dup_keep, 0, 'the other copy is an extra');
+  const sqlText = forge.sqlLog.map((l) => l.query).join('\n');
+  assert.ok(!/attachments a\s+LEFT JOIN contents/i.test(sqlText), 'no attachment-wide join with pages');
+  assert.ok(!/GROUP BY d?\.?dup_key/i.test(sqlText), 'no GROUP BY over all duplicate keys');
 
   const refs = [...db.table('attachment_refs').values()];
   assert.equal(refs.length, 1);
@@ -190,4 +201,34 @@ test('space admins are scoped to their space and cannot approve', async () => {
   currentUser = 'user-2';
   const denied = await call(app.spaceResolver, 'getStatus', {}, ctx);
   assert.equal(denied.forbidden, true);
+});
+
+test('a space whose content keeps failing is skipped with the real SQL reason, and the scan finishes', async () => {
+  currentUser = 'admin-1';
+  site.extraSpaces = [{ id: '200', key: 'BAD', name: 'Broken', type: 'global', status: 'current' }];
+  const realSql = forge.sql;
+  forge.sql = async (q, p) => {
+    if (q.startsWith('INSERT INTO contents') && p.includes('201')) {
+      const err = new Error('Unknown SQL execution error');
+      err.code = 'SQL_EXECUTION_ERROR';
+      err.context = { debug: { code: 'ER_DATA_TOO_LONG', message: "Data too long for column 'title' at row 1" } };
+      throw err;
+    }
+    return realSql(q, p);
+  };
+  const realTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn) => realTimeout(fn, 0); // skip retry back-off in the test
+  try {
+    await call(app.adminResolver, 'startScan');
+    await drain('coam-scan', app.scanWorker);
+  } finally {
+    globalThis.setTimeout = realTimeout;
+    forge.sql = realSql;
+    site.extraSpaces = [];
+  }
+  const state = forge.kv.get('scan:state');
+  assert.equal(state.status, 'done', JSON.stringify(state).slice(0, 500));
+  assert.equal(state.counters.skippedSpaces, 1);
+  assert.equal(state.skipped[0].space, 'BAD');
+  assert.match(state.skipped[0].error, /ER_DATA_TOO_LONG: Data too long/);
 });

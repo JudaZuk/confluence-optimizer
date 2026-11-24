@@ -9,8 +9,8 @@
 //   attachments list every attachment site-wide (current, archived, trashed)
 //   content     per space: pages and blog posts (bodies -> reference analysis),
 //               then trashed pages and blog posts
-//   finalize    per space: attach space ids, orphan flags, cross-page references
-//   missing     flag attachments whose page no longer exists
+//   finalize    per space: resolve cross-page references
+//   dups        flag probable duplicates (same name and size)
 //   cleanup     remove rows that were not seen in this scan
 //   snapshot    compute the summary and health score
 //   rules       turn retention rules into pending review requests
@@ -21,7 +21,7 @@ import { exec, query, queryOne, upsertMany, placeholders } from './db/sql.js';
 import { runMigrations, SCHEMA_VERSION } from './db/schema.js';
 import { extractReferences, isAttachmentReferenced } from './lib/refs.js';
 import { fileExtension, typeCategory } from './lib/files.js';
-import { toSqlDate } from './lib/time.js';
+import { toSqlDate, fromSqlDate } from './lib/time.js';
 import { getSettings, getState, setState } from './settings.js';
 import { scanQueue, WORK_BUDGET_MS } from './queues.js';
 import { auditSafe, AUDIT_EVENTS } from './audit.js';
@@ -29,6 +29,8 @@ import { takeSnapshot } from './summary.js';
 import { applyRetentionRules } from './rules.js';
 
 const STATE_KEY = 'scan:state';
+const SYNC_CHUNK = 1000;
+const DUP_CHUNK = 2000;
 const sha1 = (s) => createHash('sha1').update(s).digest('hex');
 const nowSql = () => toSqlDate(new Date());
 
@@ -111,10 +113,25 @@ export async function scanWorker(event) {
       state.lastError = `${state.phase}: ${err.message}`;
       console.error('scan step failed', state.phase, err);
       if (state.failures >= 5) {
-        await fail(state, state.lastError);
-        return;
+        // A space whose content keeps failing is skipped, so one bad space
+        // cannot stop the scan of the whole site. Other phases still fail.
+        if (state.phase === 'content' && state.currentSpace) {
+          console.error('skipping space after repeated errors', state.currentSpace.space_key, err.message);
+          state.skipped = [...(state.skipped || []), { space: state.currentSpace.space_key, error: err.message.slice(0, 500) }].slice(-50);
+          state.counters.skippedSpaces += 1;
+          state.complete = { ...state.complete, partial: true };
+          state.spaceCursor = String(state.currentSpace.id);
+          state.currentSpace = null;
+          state.pass = 0;
+          state.cursor = null;
+          state.failures = 0;
+        } else {
+          await fail(state, state.lastError);
+          return;
+        }
+      } else {
+        await new Promise((r) => setTimeout(r, 2000 * state.failures));
       }
-      await new Promise((r) => setTimeout(r, 2000 * state.failures));
     }
     state.heartbeat = Date.now();
     await setState(STATE_KEY, state);
@@ -140,8 +157,10 @@ async function step(state, settings) {
       return stepContent(state, settings);
     case 'finalize':
       return stepFinalize(state);
-    case 'missing':
-      return stepMissing(state);
+    case 'dups':
+      return stepDups(state);
+    case 'missing': // phase of older versions; continue with its replacement
+      return { ...state, phase: 'dups', dupCursor: '' };
     case 'cleanup':
       return stepCleanup(state);
     case 'snapshot': {
@@ -151,7 +170,7 @@ async function step(state, settings) {
     case 'rules': {
       await applyRetentionRules(settings);
       const done = { ...state, status: 'done', phase: 'done', finishedAt: new Date().toISOString() };
-      await auditSafe({ actor: 'app', event: AUDIT_EVENTS.SCAN_FINISHED, details: { scanId: state.scanId, counters: state.counters } });
+      await auditSafe({ actor: 'app', event: AUDIT_EVENTS.SCAN_FINISHED, details: { scanId: state.scanId, counters: state.counters, skipped: state.skipped || [] } });
       return done;
     }
     default:
@@ -237,6 +256,8 @@ async function nextSpace(state, after) {
 async function stepContent(state, settings) {
   // Pick the current space (first one after spaceCursor).
   const space = state.currentSpace || (await nextSpace(state, state.spaceCursor));
+  // Remember the space before any work, so repeated errors can skip exactly this one.
+  if (space) state.currentSpace = space;
   if (!space) {
     return { ...state, phase: 'finalize', currentSpace: null, spaceCursor: '', complete: { ...state.complete, content: true } };
   }
@@ -299,24 +320,10 @@ async function processContentBatch(state, space, pass, items, withBody) {
   if (pass.statuses.includes('trashed')) state.counters.trashed += items.length;
   else state.counters[pass.kind === 'page' ? 'pages' : 'blogposts'] += items.length;
 
-  if (!analysed.length) return;
-
-  // Same-page references: compare each page body with that page's attachments.
-  const ids = analysed.map((a) => a.id);
-  const atts = await query(`SELECT id, title, container_id FROM attachments WHERE container_id IN (${placeholders(ids.length)})`, ids);
-  const byPage = new Map(analysed.map((a) => [a.id, a.refs]));
-  const used = [];
-  for (const att of atts) {
-    const refs = byPage.get(String(att.container_id));
-    if (refs && isAttachmentReferenced(att.title, refs)) used.push(String(att.id));
-  }
-  await exec(`UPDATE attachments SET is_referenced = 0 WHERE container_id IN (${placeholders(ids.length)})`, ids);
-  for (let i = 0; i < used.length; i += 500) {
-    const chunk = used.slice(i, i + 500);
-    await exec(`UPDATE attachments SET is_referenced = 1 WHERE id IN (${placeholders(chunk.length)})`, chunk);
-  }
+  await syncAttachmentsOfPages(items, space, pass, analysed);
 
   // Cross-page references, resolved in the finalize phase.
+  if (!analysed.length) return;
   const refRows = [];
   for (const { id, refs } of analysed) {
     for (const r of refs.crossRefs) {
@@ -339,56 +346,164 @@ async function processContentBatch(state, space, pass, items, withBody) {
   }
 }
 
-async function stepFinalize(state) {
-  const space = await nextSpace(state, state.spaceCursor);
-  if (!space) return { ...state, phase: 'missing', spaceCursor: '' };
-  const sid = String(space.id);
+const normDate = (v) => (v ? toSqlDate(fromSqlDate(v)) : null);
+const normFlag = (v) => (v === null || v === undefined ? null : Number(v));
 
-  // 1. Space of each attachment, from its page or blog post.
-  await exec(
-    `UPDATE attachments a JOIN contents c ON c.id = a.container_id
-     SET a.space_id = c.space_id,
-         a.orphan_reason = IF(c.status = 'trashed', 'container_trashed', NULL)
-     WHERE c.space_id = ?`,
-    [sid],
+/**
+ * Copies each page's space, status and last change onto its attachments and,
+ * when the body was read, whether each file is referenced on the page.
+ * Rows are read and written by primary key in small chunks, and only rows that
+ * actually change are written: Forge SQL limits a single query to 16 MiB.
+ */
+async function syncAttachmentsOfPages(items, space, pass, analysed) {
+  const pages = new Map(
+    items.map((p) => [
+      String(p.id),
+      {
+        spaceId: String(p.spaceId || space.id),
+        status: p.status || pass.statuses[0],
+        modified: toSqlDate(p.version?.createdAt || p.createdAt),
+      },
+    ]),
   );
-  // 2. Resolve references made from this space to other pages and blog posts.
+  const refsByPage = new Map(analysed.map((a) => [a.id, a.refs]));
+  const pageIds = [...pages.keys()];
+  const changes = new Map(); // wanted values (JSON) -> attachment ids
+
+  for (let after = ''; ; ) {
+    const atts = await query(
+      `SELECT id, title, container_id, is_referenced, space_id, container_status, container_modified_at
+       FROM attachments WHERE container_id IN (${placeholders(pageIds.length)}) AND id > ?
+       ORDER BY id LIMIT ${SYNC_CHUNK}`,
+      [...pageIds, after],
+    );
+    for (const att of atts) {
+      const page = pages.get(String(att.container_id));
+      if (!page) continue;
+      const refs = refsByPage.get(String(att.container_id));
+      const referenced = refs ? (isAttachmentReferenced(att.title, refs) ? 1 : 0) : normFlag(att.is_referenced);
+      const want = [page.spaceId, page.status, page.modified, referenced];
+      const have = [att.space_id ? String(att.space_id) : null, att.container_status || null, normDate(att.container_modified_at), normFlag(att.is_referenced)];
+      if (JSON.stringify(want) === JSON.stringify(have)) continue;
+      const key = JSON.stringify(want);
+      if (!changes.has(key)) changes.set(key, []);
+      changes.get(key).push(String(att.id));
+    }
+    if (atts.length < SYNC_CHUNK) break;
+    after = String(atts[atts.length - 1].id);
+  }
+
+  for (const [key, ids] of changes) {
+    const [spaceId, status, modified, referenced] = JSON.parse(key);
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      await exec(
+        `UPDATE attachments SET space_id = ?, container_status = ?, container_modified_at = ?, is_referenced = ?
+         WHERE id IN (${placeholders(chunk.length)})`,
+        [spaceId, status, modified, referenced, ...chunk],
+      );
+    }
+  }
+}
+
+/**
+ * Resolves cross-page references, a few hundred at a time per space, and marks
+ * the files they point to as used.
+ */
+async function stepFinalize(state) {
+  const space = state.finalizeSpace || (await nextSpace(state, state.spaceCursor));
+  if (!space) return { ...state, phase: 'dups', spaceCursor: '', finalizeSpace: null, refCursor: '', dupCursor: '' };
+  const sid = String(space.id);
+  const refs = await query(
+    'SELECT id FROM attachment_refs WHERE source_space_id = ? AND scan_id = ? AND id > ? ORDER BY id LIMIT 200',
+    [sid, state.scanId, state.refCursor || ''],
+  );
+  if (!refs.length) return { ...state, finalizeSpace: null, spaceCursor: sid, refCursor: '' };
+  const ids = refs.map((r) => String(r.id));
+  const ph = placeholders(ids.length);
   await exec(
     `UPDATE attachment_refs r
        JOIN spaces s ON s.space_key = r.target_space_key
        JOIN contents c ON c.space_id = s.id AND c.title = r.target_title AND c.kind = r.target_kind
      SET r.resolved_target_id = c.id
-     WHERE r.source_space_id = ? AND r.scan_id = ? AND r.target_kind IN ('page', 'blogpost')`,
-    [sid, state.scanId],
+     WHERE r.id IN (${ph}) AND r.target_kind IN ('page', 'blogpost')`,
+    ids,
   );
-  await exec(
-    `UPDATE attachment_refs SET resolved_target_id = target_content_id
-     WHERE source_space_id = ? AND scan_id = ? AND target_kind = 'id'`,
-    [sid, state.scanId],
-  );
-  // 3. Anything referenced from another page is in use.
+  await exec(`UPDATE attachment_refs SET resolved_target_id = target_content_id WHERE id IN (${ph}) AND target_kind = 'id'`, ids);
   await exec(
     `UPDATE attachments a JOIN attachment_refs r ON r.resolved_target_id = a.container_id
      SET a.is_referenced = 1
-     WHERE r.source_space_id = ? AND r.scan_id = ? AND (r.filename = a.title OR r.filename = '*')`,
-    [sid, state.scanId],
+     WHERE r.id IN (${ph}) AND (r.filename = a.title OR r.filename = '*') AND (a.is_referenced IS NULL OR a.is_referenced = 0)`,
+    ids,
   );
-  return { ...state, spaceCursor: sid };
+  return { ...state, finalizeSpace: space, refCursor: ids[ids.length - 1] };
 }
 
-async function stepMissing(state) {
-  // Only trust "missing" when every space was read completely.
-  if (!state.complete.content || state.complete.partial) return { ...state, phase: 'cleanup' };
+const LIVE = new Set(['current', 'archived']);
+
+/**
+ * Marks probable duplicates (same name and size). Walks the dup_key index in
+ * order, so it never groups the whole table in one query. For each group of
+ * live copies, the copy with the lowest id is kept and the others are extra.
+ */
+async function stepDups(state) {
   const rows = await query(
-    `SELECT a.id FROM attachments a LEFT JOIN contents c ON c.id = a.container_id
-     WHERE c.id IS NULL AND a.container_kind IN ('page', 'blogpost') AND a.status <> 'trashed'
-       AND (a.orphan_reason IS NULL OR a.orphan_reason <> 'container_missing')
-     LIMIT 1000`,
+    `SELECT id, dup_key, status, dup_count, dup_keep FROM attachments
+     WHERE dup_key > ? ORDER BY dup_key LIMIT ${DUP_CHUNK}`,
+    [state.dupCursor || ''],
   );
-  if (!rows.length) return { ...state, phase: 'cleanup' };
-  const ids = rows.map((r) => String(r.id));
-  await exec(`UPDATE attachments SET orphan_reason = 'container_missing' WHERE id IN (${placeholders(ids.length)})`, ids);
-  return state;
+  if (!rows.length) return { ...state, phase: 'cleanup', dupCursor: '' };
+
+  let batch = rows;
+  let nextCursor = String(rows[rows.length - 1].dup_key);
+  if (rows.length === DUP_CHUNK) {
+    const lastKey = nextCursor;
+    batch = rows.filter((r) => r.dup_key !== lastKey);
+    if (!batch.length) {
+      // One name+size shared by thousands of files: handle that group on its own.
+      await markHugeDupGroup(lastKey);
+      return { ...state, dupCursor: lastKey };
+    }
+    nextCursor = String(batch[batch.length - 1].dup_key); // the last key is re-read whole next time
+  }
+
+  const groups = new Map();
+  for (const r of batch) {
+    if (!groups.has(r.dup_key)) groups.set(r.dup_key, []);
+    groups.get(r.dup_key).push(r);
+  }
+  const changes = new Map();
+  for (const members of groups.values()) {
+    const live = members.filter((m) => LIVE.has(m.status));
+    const keepId = live.map((m) => String(m.id)).sort()[0];
+    for (const m of members) {
+      const want = LIVE.has(m.status) ? [live.length, live.length > 1 && String(m.id) !== keepId ? 0 : 1] : [1, 1];
+      if (Number(m.dup_count) === want[0] && Number(m.dup_keep) === want[1]) continue;
+      const key = want.join('|');
+      if (!changes.has(key)) changes.set(key, []);
+      changes.get(key).push(String(m.id));
+    }
+  }
+  for (const [key, ids] of changes) {
+    const [count, keep] = key.split('|').map(Number);
+    for (let i = 0; i < ids.length; i += 500) {
+      const chunk = ids.slice(i, i + 500);
+      await exec(`UPDATE attachments SET dup_count = ?, dup_keep = ? WHERE id IN (${placeholders(chunk.length)})`, [count, keep, ...chunk]);
+    }
+  }
+  return { ...state, dupCursor: nextCursor };
+}
+
+async function markHugeDupGroup(key) {
+  const agg = await queryOne(
+    "SELECT COUNT(*) AS n, MIN(id) AS keep_id FROM attachments WHERE dup_key = ? AND status IN ('current', 'archived')",
+    [key],
+  );
+  const n = Number(agg?.n) || 0;
+  await exec(
+    "UPDATE attachments SET dup_count = ?, dup_keep = IF(id = ?, 1, 0) WHERE dup_key = ? AND status IN ('current', 'archived')",
+    [Math.max(n, 1), agg?.keep_id || '', key],
+  );
 }
 
 async function stepCleanup(state) {
@@ -398,8 +513,8 @@ async function stepCleanup(state) {
   if (state.complete.content && !state.complete.partial) tables.push('contents', 'attachment_refs');
   tables.push('spaces');
   for (const table of tables) {
-    const n = await exec(`DELETE FROM ${table} WHERE scan_id < ? LIMIT 5000`, [state.scanId]);
-    if (n >= 5000) return state; // more to delete; continue in the next step
+    const n = await exec(`DELETE FROM ${table} WHERE scan_id < ? LIMIT 1000`, [state.scanId]);
+    if (n >= 1000) return state; // more to delete; continue in the next step
   }
   return { ...state, phase: 'snapshot' };
 }
