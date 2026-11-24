@@ -254,3 +254,52 @@ test('a space whose content keeps failing is skipped with the real SQL reason, a
   assert.equal(state.skipped[0].space, 'BAD');
   assert.match(state.skipped[0].error, /ER_DATA_TOO_LONG: Data too long/);
 });
+
+test('an interrupted database setup is detected and repaired', async () => {
+  currentUser = 'admin-1';
+  const realSql = forge.sql;
+  let columnsExist = false;
+  forge.sql = async (q, p) => {
+    if (q.startsWith('SELECT stored_bytes, dup_count') && !columnsExist) {
+      const err = new Error('Unknown SQL execution error');
+      err.context = { debug: { code: 'ER_BAD_FIELD_ERROR', message: "Unknown column 'stored_bytes' in 'field list'" } };
+      throw err;
+    }
+    return realSql(q, p);
+  };
+  const { resetSchemaCheck } = await import('../src/backend/resolvers/common.js');
+  resetSchemaCheck(); // as in a fresh function instance
+  try {
+    const status = await call(app.adminResolver, 'getStatus');
+    assert.equal(status.ready, false, 'reports not ready instead of failing later');
+    assert.ok(forge.pushed.some((e) => e.queue === 'coam-migrate'), 'setup is queued again');
+    columnsExist = true; // the migration creates them
+    await drain('coam-migrate', app.migrateWorker);
+    const again = await call(app.adminResolver, 'getStatus');
+    assert.equal(again.ready, true);
+  } finally {
+    forge.sql = realSql;
+  }
+});
+
+test('database setup never runs twice at the same time', async () => {
+  const { migrationRunner } = await import('./support/stubs/sql.js');
+  const realRun = migrationRunner.run;
+  let running = 0;
+  let maxParallel = 0;
+  migrationRunner.run = async function run() {
+    running += 1;
+    maxParallel = Math.max(maxParallel, running);
+    await new Promise((r) => setTimeout(r, 200));
+    running -= 1;
+    return realRun.call(this);
+  };
+  try {
+    forge.kv.delete('schema');
+    await Promise.all([app.migrateWorker({ body: { reason: 'a' } }), app.migrateWorker({ body: { reason: 'b' } }), app.migrateWorker({ body: { reason: 'c' } })]);
+  } finally {
+    migrationRunner.run = realRun;
+  }
+  assert.equal(maxParallel, 1);
+  assert.ok(forge.kv.get('schema'), 'schema marked ready by the run that held the lock');
+});

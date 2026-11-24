@@ -47,7 +47,6 @@ const SORT_OPTIONS = [
   { label: 'Oldest change first', value: 'modified_asc' },
   { label: 'Newest change first', value: 'modified_desc' },
   { label: 'Most versions first', value: 'versions_desc' },
-  { label: 'Name A–Z', value: 'title_asc' },
 ];
 
 const STATUS_OPTIONS = [

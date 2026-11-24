@@ -88,7 +88,7 @@ async function runItem(req, item, params) {
         for (; deleted < toDelete; deleted += 1) await cf.deleteContentVersion(id, 1);
       } finally {
         if (deleted > 0) {
-          await exec('UPDATE attachments SET version_number = ? WHERE id = ?', [current - deleted, id]);
+          await exec('UPDATE attachments SET version_number = ?, stored_bytes = file_size * ? WHERE id = ?', [current - deleted, current - deleted, id]);
         }
       }
       const size = Number(att.fileSize) || 0;

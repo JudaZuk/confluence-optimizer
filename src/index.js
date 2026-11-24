@@ -1,7 +1,7 @@
 // Forge function entry points (see manifest.yml).
 
-import { getSettings, getState, setState } from './backend/settings.js';
-import { runMigrations, SCHEMA_VERSION } from './backend/db/schema.js';
+import { getSettings, getState } from './backend/settings.js';
+import { setupDatabase, SCHEMA_VERSION } from './backend/db/schema.js';
 import { migrateQueue, execQueue } from './backend/queues.js';
 import { query } from './backend/db/sql.js';
 import { toSqlDate } from './backend/lib/time.js';
@@ -18,9 +18,8 @@ export async function lifecycle() {
 }
 
 /** Async consumer with a 15 minute budget, as Forge recommends for migrations. */
-export async function migrateWorker() {
-  await runMigrations();
-  await setState('schema', SCHEMA_VERSION);
+export async function migrateWorker(event) {
+  await setupDatabase(event?.body?.reason || 'queue');
 }
 
 /**

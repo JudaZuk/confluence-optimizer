@@ -18,12 +18,12 @@
 import { createHash } from 'node:crypto';
 import * as cf from './confluence.js';
 import { exec, query, queryOne, upsertMany, placeholders } from './db/sql.js';
-import { runMigrations, SCHEMA_VERSION } from './db/schema.js';
+import { schemaLooksComplete, SCHEMA_VERSION } from './db/schema.js';
 import { extractReferences, isAttachmentReferenced } from './lib/refs.js';
 import { fileExtension, typeCategory } from './lib/files.js';
 import { toSqlDate, fromSqlDate } from './lib/time.js';
 import { getSettings, getState, setState } from './settings.js';
-import { scanQueue, WORK_BUDGET_MS } from './queues.js';
+import { scanQueue, migrateQueue, WORK_BUDGET_MS } from './queues.js';
 import { auditSafe, AUDIT_EVENTS } from './audit.js';
 import { takeSnapshot, runSummaryJob } from './summary.js';
 import { applyRetentionRules } from './rules.js';
@@ -47,10 +47,11 @@ export async function getScanState() {
   return getState(STATE_KEY, { status: 'never' });
 }
 
+/** True when the database is set up. Otherwise queues the setup and returns false. */
 export async function ensureSchema() {
-  if ((await getState('schema')) === SCHEMA_VERSION) return;
-  await runMigrations();
-  await setState('schema', SCHEMA_VERSION);
+  if ((await getState('schema')) === SCHEMA_VERSION && (await schemaLooksComplete())) return true;
+  await migrateQueue.push({ body: { reason: 'scan' } });
+  return false;
 }
 
 /** Starts a scan unless one is already running. Returns the scan state. */
@@ -99,10 +100,12 @@ export async function scanWorker(event) {
   let state = await getScanState();
   if (!state || state.scanId !== scanId || state.status !== 'running') return; // stale or cancelled chain
 
-  try {
-    await ensureSchema();
-  } catch (err) {
-    await fail(state, `Database setup failed: ${err.message}`);
+  // The scan never changes the database structure itself (parallel DDL makes
+  // index builds fail): it waits for the setup queue and tries again.
+  if (!(await ensureSchema())) {
+    state.phaseNote = 'waiting for database setup';
+    await setState(STATE_KEY, { ...state, heartbeat: Date.now() });
+    await scanQueue.push({ body: { scanId }, delayInSeconds: 120 });
     return;
   }
   const settings = await getSettings();

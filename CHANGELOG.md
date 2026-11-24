@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 – 2026-11-24
+
+- Database setup runs one at a time (a lock in the key-value store) and only from the setup queue; the scan waits for it instead of changing the database itself. Parallel setups made an index build fail. Failed steps are retried and the database's reason is logged
+
 ## 0.1.2 – 2026-11-24
 
 - Fixed: scans on large sites failed with "Unknown SQL execution error" (TiDB error 8175, query over Forge SQL's per-query memory limit). The scan and all reports now work in small chunks and never join or group the whole attachments table:
@@ -8,6 +12,7 @@
   - cross-page references are resolved a few hundred at a time
   - the attachment list looks up page titles and space keys by id
   - new indexes on `scan_id` make clean-up of old rows cheap
+- Database setup is verified: the app checks that every migration was applied and that the new columns exist, and repairs an interrupted setup automatically instead of failing with "Unknown column"
 - Large sites (tested in simulation with 2,550 spaces):
   - scan progress is saved every 15 seconds instead of after every step (far fewer key-value store writes)
   - file updates during the scan are written as 100-row upserts instead of one statement per page

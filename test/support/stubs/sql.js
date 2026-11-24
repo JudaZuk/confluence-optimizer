@@ -20,8 +20,14 @@ export const sql = {
 
 export const migrationRunner = {
   queued: [],
+  applied: [],
   enqueue(name, ddl) { this.queued.push(name); return this; },
-  async run() { return this.queued.splice(0); },
+  async run() {
+    const done = this.queued.splice(0).filter((n) => !this.applied.includes(n));
+    this.applied.push(...done);
+    return done;
+  },
+  async list() { return this.applied.map((name) => ({ name, migratedAt: new Date() })); },
 };
 
 export const errorCodes = {};

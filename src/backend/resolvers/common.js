@@ -4,13 +4,13 @@
 import { query, queryOne } from '../db/sql.js';
 import { buildAttachmentWhere, sortClause, paging, STORED_BYTES_SQL } from '../lib/filters.js';
 import { toCsv } from '../lib/csv.js';
-import { getSettings, getState, setState } from '../settings.js';
+import { getSettings, getState, setState, deleteState } from '../settings.js';
 import { getScanState } from '../scan.js';
 import { computeTrashReport, exemptSpaceIds, requestSummary } from '../summary.js';
 import { createRequest, listRequests, getRequest, cancelRequest, RequestError } from '../requests.js';
 import { audit, AUDIT_EVENTS } from '../audit.js';
 import { ForbiddenError } from '../auth.js';
-import { SCHEMA_VERSION } from '../db/schema.js';
+import { SCHEMA_VERSION, schemaLooksComplete } from '../db/schema.js';
 import { migrateQueue } from '../queues.js';
 
 export const EXPORT_LIMIT = 5000;
@@ -29,8 +29,25 @@ export function safe(fn) {
   };
 }
 
+// Verified at most every 10 minutes per warm function instance, so normal page
+// loads stay cheap.
+let schemaVerifiedAt = 0;
+export function resetSchemaCheck() {
+  schemaVerifiedAt = 0;
+}
+
 export async function schemaReady() {
-  if ((await getState('schema')) === SCHEMA_VERSION) return true;
+  if ((await getState('schema')) === SCHEMA_VERSION) {
+    if (Date.now() - schemaVerifiedAt < 10 * 60 * 1000) return true;
+    if (await schemaLooksComplete()) {
+      schemaVerifiedAt = Date.now();
+      return true;
+    }
+    // Marked ready but columns are missing (an interrupted setup): repair it.
+    console.error('schema marked ready but incomplete; re-running database setup');
+    await deleteState('schema');
+    await deleteState('schema:requestedAt');
+  }
   // First use after install or upgrade: set up the database in the background.
   const pending = await getState('schema:requestedAt');
   if (!pending || Date.now() - pending > 5 * 60 * 1000) {

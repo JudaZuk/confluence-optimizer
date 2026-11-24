@@ -5,6 +5,9 @@
 // or page bodies.
 
 import { migrationRunner } from '@forge/sql';
+import { randomUUID } from 'node:crypto';
+import { kvs } from '@forge/kvs';
+import { query } from './sql.js';
 
 export const MIGRATIONS = [
   [
@@ -181,13 +184,82 @@ export const MIGRATIONS = [
   ['v013_att_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_att_scan ON attachments (scan_id)'],
   ['v014_contents_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_contents_scan ON contents (scan_id)'],
   ['v015_refs_scan_idx', 'CREATE INDEX IF NOT EXISTS idx_refs_scan ON attachment_refs (scan_id)'],
+  // Stored size (incl. versions) as a real, indexed column, so "largest first"
+  // reads the index in order instead of sorting every file.
+  ['v016_att_stored_bytes', 'ALTER TABLE attachments ADD COLUMN IF NOT EXISTS stored_bytes BIGINT NOT NULL DEFAULT 0'],
+  ['v017_att_stored_idx', 'CREATE INDEX IF NOT EXISTS idx_att_stored ON attachments (stored_bytes)'],
+  ['v018_att_versions_idx', 'CREATE INDEX IF NOT EXISTS idx_att_versions ON attachments (version_number)'],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1][0];
 
-/** Runs every pending migration. Safe to call repeatedly. */
+/**
+ * Runs every pending migration, then checks that all of them are recorded as
+ * applied. Throws (with the missing names) if any is not, so callers never mark
+ * the schema as ready when it is not. Safe to call repeatedly.
+ */
 export async function runMigrations() {
   let runner = migrationRunner;
   for (const [name, ddl] of MIGRATIONS) runner = runner.enqueue(name, ddl);
-  return runner.run();
+  const result = await runner.run();
+  const applied = new Set(((await migrationRunner.list()) || []).map((m) => m.name));
+  const missing = MIGRATIONS.map(([name]) => name).filter((name) => !applied.has(name));
+  if (missing.length) {
+    throw new Error(`Database setup incomplete, not applied yet: ${missing.join(', ')}`);
+  }
+  return result;
+}
+
+/** Cheap check that the newest columns exist (catches an interrupted setup). */
+export async function schemaLooksComplete() {
+  try {
+    await query('SELECT stored_bytes, dup_count, dup_keep, container_status, container_modified_at FROM attachments LIMIT 1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const LOCK_KEY = 'schema:lock';
+const LOCK_TTL_MS = 14 * 60 * 1000;
+
+function describe(err) {
+  const debug = err?.cause?.context?.debug || err?.context?.debug || err?.cause?.debug;
+  const reason = debug ? `${debug.code || ''} ${debug.message || ''}`.trim() : err?.cause?.message || '';
+  return `${err?.message || err}${reason ? ` (${reason})` : ''}${err?.migrationName ? ` [${err.migrationName}]` : ''}`;
+}
+
+/**
+ * Sets up or upgrades the database. Only one run at a time (lock in the
+ * key-value store), because parallel DDL on the same table makes index builds
+ * fail. Retries a few times, logs the database's own reason, and marks the
+ * schema ready only when every migration is applied and the columns exist.
+ * Returns 'ready', or 'busy' when another run holds the lock.
+ */
+export async function setupDatabase(reason = '') {
+  const token = randomUUID();
+  const held = await kvs.get(LOCK_KEY);
+  if (held && Date.now() - held.at < LOCK_TTL_MS) return 'busy';
+  await kvs.set(LOCK_KEY, { token, at: Date.now() });
+  await sleep(1000);
+  if ((await kvs.get(LOCK_KEY))?.token !== token) return 'busy'; // someone else won the race
+  try {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const applied = await runMigrations();
+        console.log(`database setup done (${reason}); newly applied: ${JSON.stringify(applied)}`);
+        break;
+      } catch (err) {
+        console.error(`database setup attempt ${attempt} failed: ${describe(err)}`);
+        if (attempt >= 4) throw new Error(`Database setup failed: ${describe(err)}`);
+        await sleep(15000 * attempt);
+      }
+    }
+    if (!(await schemaLooksComplete())) throw new Error('Database columns are missing after setup');
+    await kvs.set('schema', SCHEMA_VERSION);
+    return 'ready';
+  } finally {
+    if ((await kvs.get(LOCK_KEY))?.token === token) await kvs.delete(LOCK_KEY);
+  }
 }

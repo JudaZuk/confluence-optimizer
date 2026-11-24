@@ -17,13 +17,15 @@ export const FINDINGS = {
   trash: { label: 'In trash' },
 };
 
+// Every sort uses an indexed column, so the database can read rows in order
+// and stop after one page instead of sorting every file (Forge SQL cancels
+// queries over 16 MiB). Sorting by name is not offered for that reason.
 export const SORTS = {
-  size_desc: 'stored_bytes DESC, a.id',
-  size_asc: 'stored_bytes ASC, a.id',
-  modified_asc: 'a.modified_at ASC, a.id',
-  modified_desc: 'a.modified_at DESC, a.id',
-  title_asc: 'a.title ASC, a.id',
-  versions_desc: 'a.version_number DESC, a.id',
+  size_desc: 'a.stored_bytes DESC',
+  size_asc: 'a.stored_bytes ASC',
+  modified_asc: 'a.modified_at ASC',
+  modified_desc: 'a.modified_at DESC',
+  versions_desc: 'a.version_number DESC',
 };
 
 /** Storage an attachment takes, including (estimated) earlier versions. */
