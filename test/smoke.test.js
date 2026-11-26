@@ -305,3 +305,35 @@ test('database setup never runs twice at the same time', async () => {
   assert.equal(maxParallel, 1);
   assert.ok(forge.kv.get('schema'), 'schema marked ready by the run that held the lock');
 });
+
+test('a Confluence rate limit pauses the scan instead of failing it', async () => {
+  currentUser = 'admin-1';
+  const realConfluence = forge.confluence;
+  let limited = 0;
+  forge.confluence = async (path, options, principal) => {
+    if (path.startsWith('/wiki/api/v2/attachments?') && limited < 1) {
+      limited += 1;
+      return { status: 429, body: { message: 'Rate limited' }, headers: { 'Retry-After': '1800' } };
+    }
+    return realConfluence(path, options, principal);
+  };
+  try {
+    await call(app.adminResolver, 'startScan');
+    const ev = forge.pushed.find((e) => e.queue === 'coam-scan');
+    forge.pushed.splice(forge.pushed.indexOf(ev), 1);
+    await app.scanWorker(ev);
+    let state = forge.kv.get('scan:state');
+    assert.equal(state.status, 'running', 'not failed');
+    assert.ok(state.pausedUntil, 'pause recorded for the UI');
+    const next = forge.pushed.find((e) => e.queue === 'coam-scan');
+    assert.equal(next.delayInSeconds, 900, 'resumes later (queue delay is capped at 15 minutes)');
+    // Pretend the pause is over, then let the scan finish.
+    state.pausedUntil = new Date(Date.now() - 1000).toISOString();
+    forge.kv.set('scan:state', state);
+    await drain('coam-scan', app.scanWorker);
+    state = forge.kv.get('scan:state');
+    assert.equal(state.status, 'done');
+  } finally {
+    forge.confluence = realConfluence;
+  }
+});

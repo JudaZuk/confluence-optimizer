@@ -100,6 +100,17 @@ export async function scanWorker(event) {
   let state = await getScanState();
   if (!state || state.scanId !== scanId || state.status !== 'running') return; // stale or cancelled chain
 
+  // Still inside a rate-limit pause (queue delays are capped at 15 minutes).
+  if (state.pausedUntil && Date.parse(state.pausedUntil) > Date.now() + 5000) {
+    const left = Math.ceil((Date.parse(state.pausedUntil) - Date.now()) / 1000);
+    await setState(STATE_KEY, { ...state, heartbeat: Date.now() });
+    await scanQueue.push({ body: { scanId }, delayInSeconds: Math.min(left, 900) });
+    return;
+  }
+  if (state.pausedUntil) {
+    delete state.pausedUntil;
+  }
+
   // The scan never changes the database structure itself (parallel DDL makes
   // index builds fail): it waits for the setup queue and tries again.
   if (!(await ensureSchema())) {
@@ -119,6 +130,18 @@ export async function scanWorker(event) {
       state = await step(state, settings);
       state.failures = 0;
     } catch (err) {
+      if (err.rateLimited) {
+        // Not a failure: Confluence asks the app to slow down. Save progress,
+        // pause, and continue from the same place afterwards.
+        const waitSec = Math.min(Math.max(err.retryAfterSec || 300, 60), 3600);
+        state.pausedUntil = new Date(Date.now() + waitSec * 1000).toISOString();
+        state.pauses = (state.pauses || 0) + 1;
+        state.heartbeat = Date.now();
+        console.warn(`scan paused by Confluence rate limit for ${waitSec} s (phase ${state.phase})`);
+        await setState(STATE_KEY, state);
+        await scanQueue.push({ body: { scanId }, delayInSeconds: Math.min(waitSec, 900) });
+        return;
+      }
       state.failures = (state.failures || 0) + 1;
       state.lastError = `${state.phase}: ${err.message}`;
       console.error('scan step failed', state.phase, err);

@@ -89,6 +89,9 @@ async function runItem(req, item, params) {
       } finally {
         if (deleted > 0) {
           await exec('UPDATE attachments SET version_number = ?, stored_bytes = file_size * ? WHERE id = ?', [current - deleted, current - deleted, id]);
+          // If interrupted part-way (for example by a rate limit), the item is
+          // retried later: expect the new version number so it is not skipped.
+          await exec('UPDATE request_items SET expected_version = ? WHERE request_id = ? AND item_id = ?', [current - deleted, item.request_id, id]);
         }
       }
       const size = Number(att.fileSize) || 0;
@@ -147,6 +150,14 @@ export async function execWorker(event) {
             details: { requestedBy: req.requested_by, approvedBy: req.decided_by, ...(result.details || {}) },
           });
         } catch (err) {
+          if (err.rateLimited) {
+            // Leave this item pending and pause the whole job.
+            const waitSec = Math.min(Math.max(err.retryAfterSec || 300, 60), 900);
+            console.warn(`cleanup ${requestId} paused by Confluence rate limit for ${waitSec} s`);
+            await release(requestId);
+            await execQueue.push({ body: { requestId }, delayInSeconds: waitSec });
+            return;
+          }
           if (err instanceof Skip) {
             status = 'skipped';
             message = err.message;

@@ -37,6 +37,13 @@ export function ScanStatus({ scan, isAdmin, onStart, onCancel }) {
             )
           ) : null}
         </Inline>
+        {running && scan.pausedUntil && Date.parse(scan.pausedUntil) > Date.now() ? (
+          <SectionMessage appearance="information" title="Paused by Confluence's API limit">
+            <Text>
+              {`Confluence limits how much an app may request per hour. The scan saved its progress and continues by itself at about ${new Date(scan.pausedUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Nothing needs to be done.`}
+            </Text>
+          </SectionMessage>
+        ) : null}
         {running ? (
           <Text>
             {`${PHASE_LABELS[scan.phase] || scan.phase}… ${formatNumber(c.spaces)} spaces, ${formatNumber(c.attachments)} attachments, ${formatNumber(c.pages)} pages, ${formatNumber(c.blogposts)} blog posts so far. You can leave this page.`}

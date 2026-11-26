@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.6 – 2026-11-26
+
+- README: removed the background note at the top and simplified the roadmap heading
+
+## 0.1.5 – 2026-11-26
+
+- Fixed: a scan failed with "HTTP 429" when Confluence's per-app API quota (points per hour, enforced since March 2026) was used up. Scans and cleanup jobs now save their progress, pause for as long as Confluence asks, and continue by themselves. The app shows when a scan is paused and when it resumes
+- A version cleanup interrupted part-way continues on retry instead of being skipped
+
 ## 0.1.4 – 2026-11-24
 
 - Fixed: the Attachments list could hit the memory limit when filters matched only a few files (for example unused images over 20 MB, sorted by versions). Up to 5,000 matches are now fetched unsorted and sorted in code; larger result sets still use the index

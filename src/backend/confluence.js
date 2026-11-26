@@ -7,6 +7,22 @@ import api, { route } from '@forge/api';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Confluence's per-app API quota is used up for now. Callers should pause and
+ * try again after `retryAfterSec` instead of treating it as a failure.
+ */
+export class RateLimitError extends Error {
+  constructor(retryAfterSec) {
+    super(`Confluence API limit for apps reached; retry in ${retryAfterSec} s`);
+    this.rateLimited = true;
+    this.retryAfterSec = retryAfterSec;
+    this.status = 429;
+  }
+}
+
+// Waits up to this long inside a function; longer waits pause the job instead.
+const MAX_INLINE_WAIT_MS = 30000;
+
 export class ConfluenceError extends Error {
   constructor(status, message, body) {
     super(message);
@@ -22,11 +38,18 @@ async function request(principal, path, options = {}) {
       ...options,
       headers: { Accept: 'application/json', ...(options.headers || {}) },
     });
-    if ((res.status === 429 || res.status === 503) && attempt < 5) {
+    if (res.status === 429 || res.status === 503) {
       const retryAfter = Number(res.headers.get('Retry-After'));
       const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * 2 ** attempt;
-      await sleep(Math.min(wait, 30000) + Math.floor(Math.random() * 250));
-      continue;
+      // Points-based hourly quotas can ask for long waits: hand those back to
+      // the job so it pauses (without failing) instead of sleeping here.
+      if (res.status === 429 && (wait > MAX_INLINE_WAIT_MS || attempt >= 4)) {
+        throw new RateLimitError(Math.max(60, Math.ceil(wait / 1000)));
+      }
+      if (attempt < 5) {
+        await sleep(wait + Math.floor(Math.random() * 250));
+        continue;
+      }
     }
     if (res.status === 204) return null;
     const text = await res.text();

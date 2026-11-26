@@ -12,12 +12,12 @@ export function route(strings, ...values) {
 const requester = (principal) => ({
   async requestConfluence(path, options = {}) {
     forge.confluenceLog.push({ principal, path, method: options.method || 'GET' });
-    const { status, body } = await forge.confluence(path, options, principal);
+    const { status, body, headers = {} } = await forge.confluence(path, options, principal);
     const text = body === undefined || body === null ? '' : JSON.stringify(body);
     return {
       status,
       ok: status >= 200 && status < 300,
-      headers: { get: () => null },
+      headers: { get: (name) => headers[name] ?? null },
       text: async () => text,
     };
   },
