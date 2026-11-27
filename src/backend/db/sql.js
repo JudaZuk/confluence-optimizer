@@ -1,6 +1,7 @@
 // Thin wrapper over @forge/sql with retries for rate limits and bulk upserts.
 
 import { sql } from '@forge/sql';
+import { recordSql } from '../usage.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -27,11 +28,15 @@ function explain(err, query) {
 
 async function run(query, params) {
   for (let attempt = 0; ; attempt += 1) {
+    const started = Date.now();
     try {
       let stmt = sql.prepare(query);
       if (params && params.length) stmt = stmt.bindParams(...params);
-      return await stmt.execute();
+      const result = await stmt.execute();
+      await recordSql(Date.now() - started);
+      return result;
     } catch (err) {
+      await recordSql(Date.now() - started); // failed statements are billed too
       if (attempt >= 3 || !isRetryable(err)) {
         const wrapped = explain(err, query);
         console.error('SQL failed', wrapped.message, JSON.stringify(wrapped.debug).slice(0, 2000));

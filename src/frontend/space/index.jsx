@@ -67,7 +67,7 @@ function SpaceApp() {
           before anything changes. Scans are started by your Confluence administrator.
         </Text>
       </Stack>
-      <ScanStatus scan={status.scan} isAdmin={false} />
+      <ScanStatus scan={status.scan} usage={status.usage} isAdmin={false} />
       <ErrorMessage error={error} />
       <Tabs id="coam-space-tabs" selected={tab} onChange={(i) => setTab(i)}>
         <TabList>

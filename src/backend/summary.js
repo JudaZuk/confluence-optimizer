@@ -8,6 +8,7 @@ import { daysAgo, monthsAgo, toSqlDate, ageBandSql, ageBandParams, AGE_BANDS } f
 import { GB } from '../shared/format.js';
 import { getState, setState, deleteState, getSettings } from './settings.js';
 import { scanQueue } from './queues.js';
+import { budgetStatus } from './usage.js';
 
 const num = (v) => Number(v) || 0;
 // No joins on the attachments table: Forge SQL limits each query to 16 MiB,
@@ -313,6 +314,10 @@ export async function requestSummary(spaceId = null, force = false) {
   let stale = force || !cached || computed < epoch;
   if (!spaceId && (await getState('summary:stale'))) stale = true;
   if (spaceId && Date.now() - computed > SPACE_SUMMARY_TTL_MS) stale = true;
+  if (stale && (await budgetStatus(await getSettings())).blocked) {
+    // Usage guard: keep showing the cached figures, do not recalculate.
+    return { summary: cached || null, refreshing: false, frozen: true };
+  }
   if (stale) {
     const pendingKey = `${key}:pending`;
     const pending = Number(await getState(pendingKey)) || 0;
@@ -328,6 +333,10 @@ export async function requestSummary(spaceId = null, force = false) {
 export async function runSummaryJob(target) {
   const settings = await getSettings();
   const spaceId = target === 'site' ? null : String(target);
+  if ((await budgetStatus(settings)).blocked) {
+    await deleteState(`${summaryKey(spaceId)}:pending`);
+    return;
+  }
   try {
     if (spaceId) await setState(summaryKey(spaceId), await computeSummary(settings, spaceId));
     else await takeSnapshot(settings);

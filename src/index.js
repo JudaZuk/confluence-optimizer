@@ -7,10 +7,17 @@ import { query } from './backend/db/sql.js';
 import { toSqlDate } from './backend/lib/time.js';
 import { getScanState, startScan } from './backend/scan.js';
 
-export { adminResolver } from './backend/resolvers/admin.js';
-export { spaceResolver } from './backend/resolvers/space.js';
-export { scanWorker } from './backend/scan.js';
-export { execWorker } from './backend/executor.js';
+import { adminResolver as adminResolverImpl } from './backend/resolvers/admin.js';
+import { spaceResolver as spaceResolverImpl } from './backend/resolvers/space.js';
+import { scanWorker as scanWorkerImpl } from './backend/scan.js';
+import { execWorker as execWorkerImpl } from './backend/executor.js';
+import { withUsageFlush, budgetStatus } from './backend/usage.js';
+
+// Every entry point saves its SQL request count when it finishes (usage guard).
+export const adminResolver = withUsageFlush(adminResolverImpl);
+export const spaceResolver = withUsageFlush(spaceResolverImpl);
+export const scanWorker = withUsageFlush(scanWorkerImpl);
+export const execWorker = withUsageFlush(execWorkerImpl);
 
 /** App installed or upgraded: create or update the database schema in the background. */
 export async function lifecycle() {
@@ -18,9 +25,9 @@ export async function lifecycle() {
 }
 
 /** Async consumer with a 15 minute budget, as Forge recommends for migrations. */
-export async function migrateWorker(event) {
+export const migrateWorker = withUsageFlush(async (event) => {
   await setupDatabase(event?.body?.reason || 'queue');
-}
+});
 
 /**
  * Daily housekeeping:
@@ -28,7 +35,7 @@ export async function migrateWorker(event) {
  *  - restart a scan that stopped reporting progress
  *  - start a scan when the last one is older than the configured interval
  */
-export async function daily() {
+export const daily = withUsageFlush(async () => {
   if ((await getState('schema')) !== SCHEMA_VERSION) {
     await migrateQueue.push({ body: { reason: 'daily' } });
     return;
@@ -41,6 +48,15 @@ export async function daily() {
 
   const settings = await getSettings();
   const scan = await getScanState();
+  const budget = await budgetStatus(settings);
+  if (budget.blocked) {
+    console.log(`daily: usage guard active (${budget.used} of ${budget.limit} SQL requests); no scan started`);
+    return;
+  }
+  if (scan.status === 'paused') {
+    await startScan('app:schedule'); // usage guard no longer blocks: resume where it stopped
+    return;
+  }
   if (scan.status === 'running') {
     await startScan('app:schedule'); // no-op unless the scan stopped sending heartbeats
     return;
@@ -49,4 +65,4 @@ export async function daily() {
   const last = scan.finishedAt ? Date.parse(scan.finishedAt) : 0;
   const due = !last || Date.now() - last >= settings.scanIntervalDays * 86400000 - 3600000;
   if (due) await startScan('app:schedule');
-}
+});

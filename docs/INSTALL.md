@@ -99,6 +99,8 @@ The code is free (Apache License 2.0). Forge apps run on Atlassian infrastructur
 | Forge SQL compute | 1 hour, 100,000 requests | scans write in batches of 100 rows |
 | Key-value store | 0.1 GB read, 0.1 GB written | settings and scan state (tiny) |
 
+**Usage guard.** In the app's Settings, *Monthly usage limit* stops scans before the free SQL request allowance is used up (default: at 90% of 100,000) and shows this month's count. The count is the app's own; correct it from the developer console if they differ.
+
 Approximate needs: the index takes around 1 KB per attachment and per page, so 200,000 attachments need roughly 0.2–0.3 GB. A weekly scan of a site that size makes a few tens of thousands of SQL requests. Most Standard sites stay inside the free allowance; above it, the overage on large sites is typically small. If cost matters, scan monthly (`Automatic scan every … days`) and turn off page content analysis for very large sites.
 
 Forge SQL limits each installation's database to 1 GiB in production, which fits several million rows of metadata.

@@ -8,8 +8,13 @@ export const DEFAULT_SETTINGS = {
   ...DEFAULT_RULES, // staleMonths, unusedMinAgeDays, keepVersions, largeFileMb
   exemptSpaceKeys: [], // never suggested for cleanup
   scanBodies: true, // read page bodies to detect unused attachments
-  scanIntervalDays: 7, // automatic rescan interval, 0 = manual only
+  scanIntervalDays: 30, // automatic rescan interval, 0 = manual only (monthly keeps large sites within the free allowance)
   allowSpaceAdminRequests: true, // space admins may queue cleanup for their space
+  usageGuard: {
+    enabled: true, // stop scans before the Forge free allowance is used up
+    sqlRequestLimit: 100000, // Forge SQL requests included free per month
+    stopAtPercent: 90, // no new scans or background figures from this point
+  },
   retention: {
     purgeTrashAfterDays: 0, // 0 = off. Proposes a purge of items seen in trash longer than this
     pruneVersionsKeep: 0, // 0 = off. Proposes deleting versions beyond the newest N
@@ -39,6 +44,11 @@ export function sanitizeSettings(input = {}) {
     scanBodies: input.scanBodies !== false,
     scanIntervalDays: clampInt(input.scanIntervalDays, 0, 365, d.scanIntervalDays),
     allowSpaceAdminRequests: input.allowSpaceAdminRequests !== false,
+    usageGuard: {
+      enabled: (input.usageGuard || {}).enabled !== false,
+      sqlRequestLimit: clampInt((input.usageGuard || {}).sqlRequestLimit, 1000, 100000000, d.usageGuard.sqlRequestLimit),
+      stopAtPercent: clampInt((input.usageGuard || {}).stopAtPercent, 10, 100, d.usageGuard.stopAtPercent),
+    },
     retention: {
       purgeTrashAfterDays: clampInt(r.purgeTrashAfterDays, 0, 3650, 0),
       pruneVersionsKeep: clampInt(r.pruneVersionsKeep, 0, 1000, 0),
@@ -49,7 +59,12 @@ export function sanitizeSettings(input = {}) {
 
 export async function getSettings() {
   const stored = (await kvs.get('settings')) || {};
-  return sanitizeSettings({ ...DEFAULT_SETTINGS, ...stored, retention: { ...DEFAULT_SETTINGS.retention, ...(stored.retention || {}) } });
+  return sanitizeSettings({
+    ...DEFAULT_SETTINGS,
+    ...stored,
+    retention: { ...DEFAULT_SETTINGS.retention, ...(stored.retention || {}) },
+    usageGuard: { ...DEFAULT_SETTINGS.usageGuard, ...(stored.usageGuard || {}) },
+  });
 }
 
 export async function saveSettings(input) {

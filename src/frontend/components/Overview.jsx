@@ -85,6 +85,7 @@ export function Overview({ summary, history = [], onReview, isSite }) {
   return (
     <Stack space="space.300">
       {summary.refreshing ? <Text>Updating these figures in the background…</Text> : null}
+      {summary.frozen ? <Text>These figures are not being updated: the monthly usage limit is reached (see Settings).</Text> : null}
       <Inline space="space.200" shouldWrap>
         <Kpi
           label="Health score"

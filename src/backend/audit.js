@@ -20,6 +20,7 @@ export const AUDIT_EVENTS = {
   SCAN_STARTED: 'scan.started',
   SCAN_FINISHED: 'scan.finished',
   SCAN_FAILED: 'scan.failed',
+  SCAN_PAUSED: 'scan.paused',
   EXPORT: 'report.exported',
   SETTINGS_CHANGED: 'settings.changed',
 };

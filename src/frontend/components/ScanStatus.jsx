@@ -14,9 +14,10 @@ const PHASE_LABELS = {
   rules: 'Applying retention rules',
 };
 
-export function ScanStatus({ scan, isAdmin, onStart, onCancel }) {
+export function ScanStatus({ scan, usage, isAdmin, onStart, onCancel }) {
   const c = scan?.counters || {};
   const running = scan?.status === 'running';
+  const paused = scan?.status === 'paused';
   return (
     <Card>
       <Stack space="space.100">
@@ -27,16 +28,47 @@ export function ScanStatus({ scan, isAdmin, onStart, onCancel }) {
             {scan?.status === 'done' ? <Lozenge appearance="success">up to date as of {formatDate(scan.finishedAt)}</Lozenge> : null}
             {scan?.status === 'failed' ? <Lozenge appearance="removed">last scan failed</Lozenge> : null}
             {scan?.status === 'cancelled' ? <Lozenge>last scan cancelled</Lozenge> : null}
+            {paused ? <Lozenge appearance="moved">scan paused: monthly limit</Lozenge> : null}
             {!scan || scan.status === 'never' ? <Lozenge appearance="new">not scanned yet</Lozenge> : null}
           </Inline>
           {isAdmin ? (
             running ? (
               <Button onClick={onCancel}>Cancel scan</Button>
             ) : (
-              <Button appearance="primary" onClick={onStart}>Scan now</Button>
+              <Inline space="space.100">
+                {paused ? <Button onClick={onCancel}>Cancel scan</Button> : null}
+                <Button appearance="primary" onClick={onStart} isDisabled={Boolean(usage?.blocked)}>
+                  {paused ? 'Resume scan' : 'Scan now'}
+                </Button>
+              </Inline>
             )
           ) : null}
         </Inline>
+        {paused ? (
+          <SectionMessage appearance="warning" title="Scan paused to stay within the free Forge allowance">
+            <Text>
+              {`The app has used about ${formatNumber(usage?.used)} of ${formatNumber(usage?.limit)} free database requests this month. ` +
+                `The scan kept its progress and continues by itself after ${formatDate(scan.resumeAfter)}. ` +
+                'To continue earlier, raise the limit in Settings and click Resume scan.'}
+            </Text>
+          </SectionMessage>
+        ) : null}
+        {!paused && usage?.blocked && isAdmin ? (
+          <SectionMessage appearance="warning" title="Scans are stopped for this month">
+            <Text>
+              {`About ${formatNumber(usage.used)} of ${formatNumber(usage.limit)} free Forge database requests used (${usage.percent}%). ` +
+                `New scans and figure updates start again after ${formatDate(usage.resetsAt)}. You can change this in Settings.`}
+            </Text>
+          </SectionMessage>
+        ) : null}
+        {!usage?.blocked && usage?.warn && isAdmin ? (
+          <SectionMessage appearance="information" title="Getting close to the monthly limit">
+            <Text>
+              {`About ${formatNumber(usage.used)} of ${formatNumber(usage.limit)} free Forge database requests used this month (${usage.percent}%). ` +
+                `Scans stop automatically at ${usage.stopPercent}%.`}
+            </Text>
+          </SectionMessage>
+        ) : null}
         {running && scan.pausedUntil && Date.parse(scan.pausedUntil) > Date.now() ? (
           <SectionMessage appearance="information" title="Paused by Confluence's API limit">
             <Text>

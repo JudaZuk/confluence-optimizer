@@ -337,3 +337,31 @@ test('a Confluence rate limit pauses the scan instead of failing it', async () =
     forge.confluence = realConfluence;
   }
 });
+
+test('the usage guard refuses scans and resumes a paused scan when allowed', async () => {
+  currentUser = 'admin-1';
+  // The app counts its own SQL requests.
+  const usage0 = await call(app.adminResolver, 'getUsage');
+  assert.ok(usage0.used > 0, 'SQL requests are counted');
+
+  const blocked = await call(app.adminResolver, 'correctUsage', { sqlRequests: 95000 });
+  assert.equal(blocked.blocked, true);
+  const refused = await call(app.adminResolver, 'startScan');
+  assert.equal(refused.budget, true);
+  assert.match(refused.error, /Scans are stopped for this month/);
+  const status = await call(app.adminResolver, 'getStatus');
+  assert.equal(status.usage.blocked, true, 'the UI is told');
+  const summary = await call(app.adminResolver, 'getSummary', { refresh: true });
+  assert.equal(summary.frozen, true, 'no background recalculation while blocked');
+  assert.ok(!forge.pushed.some((e) => e.queue === 'coam-scan'), 'nothing queued');
+
+  // A scan paused by the guard resumes once usage is below the limit again.
+  forge.kv.set('scan:state', { ...forge.kv.get('scan:state'), status: 'paused', pauseReason: 'budget', phase: 'dups', dupCursor: '' });
+  await app.daily();
+  assert.equal(forge.kv.get('scan:state').status, 'paused', 'stays paused while blocked');
+  await call(app.adminResolver, 'correctUsage', { sqlRequests: 0 });
+  await app.daily();
+  assert.equal(forge.kv.get('scan:state').status, 'running', 'resumed');
+  await drain('coam-scan', app.scanWorker);
+  assert.equal(forge.kv.get('scan:state').status, 'done');
+});

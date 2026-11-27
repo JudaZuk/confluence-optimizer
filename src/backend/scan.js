@@ -26,6 +26,7 @@ import { getSettings, getState, setState } from './settings.js';
 import { scanQueue, migrateQueue, WORK_BUDGET_MS } from './queues.js';
 import { auditSafe, AUDIT_EVENTS } from './audit.js';
 import { takeSnapshot, runSummaryJob } from './summary.js';
+import { budgetStatus } from './usage.js';
 import { applyRetentionRules } from './rules.js';
 
 const STATE_KEY = 'scan:state';
@@ -55,10 +56,31 @@ export async function ensureSchema() {
 }
 
 /** Starts a scan unless one is already running. Returns the scan state. */
+export class BudgetError extends Error {
+  constructor(budget) {
+    super(
+      `Scans are stopped for this month: the app has used about ${budget.used.toLocaleString('en-US')} of ` +
+        `${budget.limit.toLocaleString('en-US')} free Forge SQL requests (stop at ${budget.stopPercent}%). ` +
+        `Scans can run again from ${budget.resetsAt.slice(0, 10)}, or change the limit in Settings.`,
+    );
+    this.budget = budget;
+  }
+}
+
 export async function startScan(actor) {
   const current = await getScanState();
   if (current.status === 'running' && Date.now() - (current.heartbeat || 0) < 30 * 60 * 1000) {
     return current;
+  }
+  const budget = await budgetStatus(await getSettings());
+  if (budget.blocked) throw new BudgetError(budget);
+  if (current.status === 'paused') {
+    // Resume a scan that was paused by the usage guard.
+    const resumed = { ...current, status: 'running', pauseReason: null, resumeAfter: null, heartbeat: Date.now() };
+    await setState(STATE_KEY, resumed);
+    await auditSafe({ actor, event: AUDIT_EVENTS.SCAN_STARTED, details: { scanId: current.scanId, resumed: true } });
+    await scanQueue.push({ body: { scanId: current.scanId } });
+    return resumed;
   }
   const state = {
     scanId: Date.now(),
@@ -82,7 +104,7 @@ export async function startScan(actor) {
 
 export async function cancelScan(actor) {
   const state = await getScanState();
-  if (state.status !== 'running') return state;
+  if (state.status !== 'running' && state.status !== 'paused') return state;
   const next = { ...state, status: 'cancelled', finishedAt: new Date().toISOString(), cancelledBy: actor };
   await setState(STATE_KEY, next);
   return next;
@@ -171,6 +193,20 @@ export async function scanWorker(event) {
       const latest = await getScanState();
       if (latest.scanId !== scanId || latest.status !== 'running') return;
       state.heartbeat = Date.now();
+      if (state.status === 'running') {
+        const budget = await budgetStatus(settings);
+        if (budget.blocked) {
+          // Usage guard: stop here, keep the position, resume next month (or
+          // when an admin raises the limit and clicks Scan now).
+          state.status = 'paused';
+          state.pauseReason = 'budget';
+          state.resumeAfter = budget.resetsAt;
+          console.warn(`scan paused by usage guard: ${budget.used} of ${budget.limit} SQL requests used`);
+          await setState(STATE_KEY, state);
+          await auditSafe({ actor: 'app', event: AUDIT_EVENTS.SCAN_PAUSED, details: { scanId, used: budget.used, limit: budget.limit, resumeAfter: budget.resetsAt } });
+          return;
+        }
+      }
       await setState(STATE_KEY, state);
       lastSave = Date.now();
       if (state.status !== 'running') return;
@@ -284,6 +320,7 @@ async function stepAttachments(state) {
       trashed_seen_at: "IF(VALUES(status) = 'trashed', COALESCE(trashed_seen_at, VALUES(trashed_seen_at)), NULL)",
       status: 'VALUES(status)',
     },
+    200, // rows per statement: half the requests of the default, still far below the 1 MiB request limit
   );
   state.counters.attachments += rows.length;
   if (body?._links?.base) await setState('baseUrl', body._links.base);
@@ -292,8 +329,18 @@ async function stepAttachments(state) {
   return { ...state, cursor: null, phase: 'content', spaceCursor: '', pass: 0, complete: { ...state.complete, attachments: true } };
 }
 
+// The scan's spaces, loaded once per function instance (one query instead of
+// one per space; 2,550 spaces made that thousands of requests per scan).
+let spaceCache = { scanId: null, rows: [] };
+
 async function nextSpace(state, after) {
-  return queryOne('SELECT id, space_key FROM spaces WHERE scan_id = ? AND id > ? ORDER BY id LIMIT 1', [state.scanId, after]);
+  if (spaceCache.scanId !== state.scanId) {
+    const rows = await query('SELECT id, space_key FROM spaces WHERE scan_id = ? ORDER BY id', [state.scanId]);
+    spaceCache = { scanId: state.scanId, rows: rows.map((r) => ({ id: String(r.id), space_key: r.space_key })) };
+  }
+  const key = String(after || '');
+  // Same order as the database: ids compared as strings.
+  return spaceCache.rows.find((r) => r.id > key) || null;
 }
 
 async function stepContent(state, settings) {
@@ -453,18 +500,16 @@ async function syncAttachmentsOfPages(items, space, pass, analysed) {
 }
 
 /**
- * Resolves cross-page references, a few hundred at a time per space, and marks
- * the files they point to as used.
+ * Resolves cross-page references, 200 at a time across the whole site (one
+ * query per 200 references, instead of at least one per space), and marks the
+ * files they point to as used.
  */
 async function stepFinalize(state) {
-  const space = state.finalizeSpace || (await nextSpace(state, state.spaceCursor));
-  if (!space) return { ...state, phase: 'dups', spaceCursor: '', finalizeSpace: null, refCursor: '', dupCursor: '' };
-  const sid = String(space.id);
   const refs = await query(
-    'SELECT id FROM attachment_refs WHERE source_space_id = ? AND scan_id = ? AND id > ? ORDER BY id LIMIT 200',
-    [sid, state.scanId, state.refCursor || ''],
+    'SELECT id FROM attachment_refs WHERE scan_id = ? AND id > ? ORDER BY id LIMIT 200',
+    [state.scanId, state.refCursor || ''],
   );
-  if (!refs.length) return { ...state, finalizeSpace: null, spaceCursor: sid, refCursor: '' };
+  if (!refs.length) return { ...state, phase: 'dups', spaceCursor: '', finalizeSpace: null, refCursor: '', dupCursor: '' };
   const ids = refs.map((r) => String(r.id));
   const ph = placeholders(ids.length);
   await exec(
@@ -482,7 +527,7 @@ async function stepFinalize(state) {
      WHERE r.id IN (${ph}) AND (r.filename = a.title OR r.filename = '*') AND (a.is_referenced IS NULL OR a.is_referenced = 0)`,
     ids,
   );
-  return { ...state, finalizeSpace: space, refCursor: ids[ids.length - 1] };
+  return { ...state, refCursor: ids[ids.length - 1] };
 }
 
 const LIVE = new Set(['current', 'archived']);

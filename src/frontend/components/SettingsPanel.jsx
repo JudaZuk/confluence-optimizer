@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Stack, Inline, Text, Button, Textfield, Toggle, SectionMessage } from '@forge/react';
+import { Stack, Inline, Text, Strong, Button, Textfield, Toggle, SectionMessage, ProgressBar } from '@forge/react';
+import { formatNumber, formatDate } from '../../shared/format.js';
 import { call } from './api.js';
 import { ErrorMessage, FieldLabel, Loading, Section } from './ui.jsx';
 
@@ -30,10 +31,22 @@ export function SettingsPanel({ onSaved }) {
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [usage, setUsage] = useState(null);
+  const [consoleCount, setConsoleCount] = useState('');
 
   useEffect(() => {
     call('getSettings').then(setS).catch((err) => setError(err.message));
+    call('getUsage').then(setUsage).catch(() => null);
   }, []);
+
+  const correct = async () => {
+    try {
+      setUsage(await call('correctUsage', { sqlRequests: consoleCount }));
+      setConsoleCount('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   if (!s) return error ? <ErrorMessage error={error} /> : <Loading />;
   const set = (patch) => { setS({ ...s, ...patch }); setSaved(false); };
@@ -45,6 +58,7 @@ export function SettingsPanel({ onSaved }) {
     try {
       setS(await call('saveSettings', { settings: { ...s, exemptSpaceKeys: s.exemptSpaceKeysText ?? s.exemptSpaceKeys } }));
       setSaved(true);
+      call('getUsage').then(setUsage).catch(() => null);
       if (onSaved) onSaved();
     } catch (err) {
       setError(err.message);
@@ -82,6 +96,51 @@ export function SettingsPanel({ onSaved }) {
           value={s.scanBodies}
           onChange={(v) => set({ scanBodies: v })}
         />
+      </Section>
+
+      <Section title="Monthly usage limit">
+        <Text>
+          Forge includes a monthly free allowance per app; usage above it is billed to the app's Developer Space. The app
+          counts its own database (Forge SQL) requests and stops starting scans and figure updates at the limit below. A
+          running scan pauses and continues by itself next month. Clean-ups you approve still run.
+        </Text>
+        {usage ? (
+          <Stack space="space.050">
+            <Text>
+              <Strong>{`This month (${usage.month}, UTC): about ${formatNumber(usage.used)} of ${formatNumber(usage.limit)} database requests (${usage.percent}%)`}</Strong>
+            </Text>
+            <ProgressBar value={Math.min(1, usage.used / usage.limit)} />
+            <Text>{`Stops at ${formatNumber(usage.stopAt)} (${usage.stopPercent}%). Resets ${formatDate(usage.resetsAt)}.${usage.correctedAt ? ` Last corrected ${formatDate(usage.correctedAt)}.` : ''}`}</Text>
+          </Stack>
+        ) : null}
+        <ToggleField
+          label="Stop scans before the free allowance is used up"
+          value={s.usageGuard?.enabled !== false}
+          onChange={(v) => set({ usageGuard: { ...s.usageGuard, enabled: v } })}
+        />
+        <NumberField
+          label="Free database requests per month"
+          help="100,000 is Forge's free allowance for SQL requests at the time of writing. Check Atlassian's Forge pricing page."
+          value={s.usageGuard?.sqlRequestLimit}
+          onChange={(v) => set({ usageGuard: { ...s.usageGuard, sqlRequestLimit: v } })}
+        />
+        <NumberField
+          label="Stop at (% of the free allowance)"
+          help="90% leaves room for page views, clean-ups and the difference between this count and Atlassian's."
+          value={s.usageGuard?.stopAtPercent}
+          onChange={(v) => set({ usageGuard: { ...s.usageGuard, stopAtPercent: v } })}
+        />
+        <Stack space="space.050">
+          <FieldLabel>Correct the count</FieldLabel>
+          <Text>
+            This count is the app's own and can differ from Atlassian's. Enter the "SQL: Compute requests" figure for this
+            month from the developer console (app → Usage and charges) to bring it in line.
+          </Text>
+          <Inline space="space.100" alignBlock="center">
+            <Textfield value={consoleCount} onChange={(e) => setConsoleCount(e.target.value.replace(/[^0-9]/g, ''))} />
+            <Button onClick={correct} isDisabled={!consoleCount}>Set this month's count</Button>
+          </Inline>
+        </Stack>
       </Section>
 
       <Section title="Delegation">

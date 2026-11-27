@@ -118,3 +118,17 @@ test('small result sets are sorted in code like the database would', () => {
   assert.deepEqual(sortRows(rows, sortSpec('modified_asc')).map((r) => r.id), ['c', 'b', 'a'], 'nulls last');
   assert.deepEqual(sortRows(rows, sortSpec('nonsense')).map((r) => r.id), ['a', 'c', 'b'], 'unknown sort = largest first');
 });
+
+test('usage guard blocks at the chosen share of the free allowance', async () => {
+  const { evaluateBudget, nextMonthStart } = await import('../src/backend/lib/budget.js');
+  const guard = { enabled: true, sqlRequestLimit: 100000, stopAtPercent: 90 };
+  assert.equal(evaluateBudget({ sqlRequests: 50000 }, guard).blocked, false);
+  assert.equal(evaluateBudget({ sqlRequests: 75000 }, guard).warn, true, 'warns from 80% of the stop point');
+  const at = evaluateBudget({ sqlRequests: 90000 }, guard);
+  assert.equal(at.blocked, true);
+  assert.equal(at.stopAt, 90000);
+  assert.equal(at.percent, 90);
+  assert.equal(evaluateBudget({ sqlRequests: 150000 }, { ...guard, enabled: false }).blocked, false, 'can be turned off');
+  assert.equal(nextMonthStart(new Date('2026-11-27T06:55:00Z')).toISOString(), '2026-12-01T00:00:00.000Z');
+  assert.equal(nextMonthStart(new Date('2026-12-31T23:00:00Z')).toISOString(), '2027-01-01T00:00:00.000Z');
+});

@@ -6,6 +6,7 @@ import { query, queryOne } from '../db/sql.js';
 import { toCsv } from '../lib/csv.js';
 import { requireSiteAdmin } from '../auth.js';
 import { getSettings, saveSettings } from '../settings.js';
+import { budgetStatus, getUsage, correctUsage } from '../usage.js';
 import { startScan, cancelScan, getScanState } from '../scan.js';
 import { getHistory, requestSummary } from '../summary.js';
 import { decideRequest, stopRequest } from '../requests.js';
@@ -26,8 +27,8 @@ const handlers = {
     await adminScope(context);
     if (!(await schemaReady())) return { notReady: true };
     if ((await getScanState()).status === 'never') return { notReady: true };
-    const { summary, refreshing } = await requestSummary(null, Boolean(payload?.refresh));
-    return summary ? { ...summary, refreshing } : { pending: true };
+    const { summary, refreshing, frozen } = await requestSummary(null, Boolean(payload?.refresh));
+    return summary ? { ...summary, refreshing, frozen: Boolean(frozen) } : { pending: !frozen, frozen: Boolean(frozen), notReady: Boolean(frozen) };
   },
 
   getHistory: async ({ context }) => {
@@ -96,6 +97,19 @@ const handlers = {
     ]);
     await audit({ actor: context.accountId, event: AUDIT_EVENTS.EXPORT, details: { report: 'audit', rows: rows.length } });
     return { csv, rows: rows.length, truncated: rows.length >= EXPORT_LIMIT };
+  },
+
+  getUsage: async ({ context }) => {
+    await adminScope(context);
+    return budgetStatus(await getSettings());
+  },
+
+  correctUsage: async ({ payload, context }) => {
+    await adminScope(context);
+    const before = await getUsage();
+    const after = await correctUsage(payload?.sqlRequests);
+    await audit({ actor: context.accountId, event: AUDIT_EVENTS.SETTINGS_CHANGED, details: { usageCorrected: { from: before.sqlRequests, to: after.sqlRequests, month: after.month } } });
+    return budgetStatus(await getSettings());
   },
 
   getSettings: async ({ context }) => {

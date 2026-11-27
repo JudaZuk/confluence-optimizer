@@ -45,6 +45,12 @@ export function createFakeDb() {
     const q = query.replace(/\s+/g, ' ').trim();
     if (q.startsWith('INSERT INTO')) return insert(q, params);
 
+    if (q.startsWith('SELECT id, space_key FROM spaces WHERE scan_id = ? ORDER BY id')) {
+      const rows = [...table('spaces').values()]
+        .filter((r) => r.scan_id === params[0])
+        .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      return { rows };
+    }
     if (q.startsWith('SELECT id, space_key FROM spaces WHERE scan_id = ? AND id > ?')) {
       const rows = [...table('spaces').values()]
         .filter((r) => r.scan_id === params[0] && String(r.id) > String(params[1]))

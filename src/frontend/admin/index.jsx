@@ -109,7 +109,7 @@ function AdminApp() {
   return (
     <Stack space="space.300">
       <Text>Find what fills your Confluence storage and clean it up safely: every change is reviewed, approved and logged.</Text>
-      <ScanStatus scan={status.scan} isAdmin onStart={startScan} onCancel={cancelScan} />
+      <ScanStatus scan={status.scan} usage={status.usage} isAdmin onStart={startScan} onCancel={cancelScan} />
       <ErrorMessage error={error} />
       <Tabs id="coam-admin-tabs" selected={tab} onChange={(i) => setTab(i)}>
         <TabList>

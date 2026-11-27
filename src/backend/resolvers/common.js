@@ -5,7 +5,8 @@ import { query, queryOne } from '../db/sql.js';
 import { buildAttachmentWhere, sortClause, sortSpec, sortRows, paging, STORED_BYTES_SQL } from '../lib/filters.js';
 import { toCsv } from '../lib/csv.js';
 import { getSettings, getState, setState, deleteState } from '../settings.js';
-import { getScanState } from '../scan.js';
+import { getScanState, BudgetError } from '../scan.js';
+import { budgetStatus } from '../usage.js';
 import { computeTrashReport, exemptSpaceIds, requestSummary } from '../summary.js';
 import { createRequest, listRequests, getRequest, cancelRequest, RequestError } from '../requests.js';
 import { audit, AUDIT_EVENTS } from '../audit.js';
@@ -23,6 +24,7 @@ export function safe(fn) {
     } catch (err) {
       if (err instanceof ForbiddenError) return { error: err.message, forbidden: true };
       if (err instanceof RequestError) return { error: err.message };
+      if (err instanceof BudgetError) return { error: err.message, budget: true };
       console.error('resolver error', err);
       return { error: `Something went wrong: ${err.message}` };
     }
@@ -164,6 +166,7 @@ export function commonHandlers(getScope) {
         ready,
         scope: { spaceId: scope.spaceId || null, spaceKey: scope.spaceKey || null, isAdmin: scope.isAdmin },
         scan: await getScanState(),
+        usage: await budgetStatus(settings),
         summaryStale: Boolean(await getState('summary:stale')),
         settings: {
           storageQuotaGb: settings.storageQuotaGb,
@@ -181,8 +184,8 @@ export function commonHandlers(getScope) {
       if (!scope.spaceId) throw new RequestError('No space in context.');
       if (!(await schemaReady())) return { notReady: true };
       if ((await getScanState()).status === 'never') return { notReady: true };
-      const { summary, refreshing } = await requestSummary(scope.spaceId, Boolean(payload?.refresh));
-      return summary ? { ...summary, refreshing } : { pending: true };
+      const { summary, refreshing, frozen } = await requestSummary(scope.spaceId, Boolean(payload?.refresh));
+      return summary ? { ...summary, refreshing, frozen: Boolean(frozen) } : { pending: !frozen, frozen: Boolean(frozen), notReady: Boolean(frozen) };
     },
 
     listAttachments: async ({ payload, context }) => {

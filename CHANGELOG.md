@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7 – 2026-11-27
+
+- Usage guard (Settings → Monthly usage limit): the app counts its own Forge SQL requests per calendar month (UTC). From a chosen share of the free allowance (default 90% of 100,000) it refuses new scans, pauses a running scan until the next month, and stops recalculating figures. Warns from 80% of the stop point. The count can be corrected from the developer console figure. Approved clean-ups still run
+- Scans use far fewer database requests (about 60% fewer in the 2,550-space simulation): spaces are loaded once per run instead of once per space, cross-page references are resolved site-wide in batches, and file rows are written 200 per statement
+- New installations scan automatically every 30 days instead of every 7
+
 ## 0.1.6 – 2026-11-26
 
 - README: removed the background note at the top and simplified the roadmap heading

@@ -1,6 +1,6 @@
 {
   "name": "confluence-optimizer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Free, open-source Forge app for Confluence Cloud: find what fills your storage (attachments, old versions, trash, duplicates, unused files) and clean it up through a reviewed, audited queue.",
   "license": "Apache-2.0",
   "private": true,
