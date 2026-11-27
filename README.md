@@ -21,6 +21,7 @@ Confluence Cloud Standard has a 250 GB storage limit, and Atlassian offers no bu
 | **Audit log** | Every request, decision, change, failure, export and settings change, with CSV export. |
 | **Space admins** | A *Storage cleanup* page in each space's settings. Space admins see only their space and can request cleanup (admins approve). |
 | **Retention rules** | Optional: propose purging trash after N days, keeping only the newest N versions, or trashing unused files. Rules only create *pending* requests. |
+| **Usage guard** | Counts the app's own Forge database requests per month and stops scans before the free allowance is used up. See [Cost and usage limit](#cost-and-usage-limit). |
 
 ## Safety principles
 
@@ -50,9 +51,35 @@ Then open **Confluence → Settings (gear) → Confluence Optimizer** and click 
 
 Full instructions, including costs and troubleshooting: [docs/INSTALL.md](docs/INSTALL.md).
 
-## Cost
+## Cost and usage limit
 
-The app itself is free (Apache 2.0). Forge usage is billed to the owner of the Developer Space the app is registered in, with a monthly free allowance per app. A typical Standard site is expected to stay within the allowance; see [Who pays](docs/INSTALL.md#who-pays-read-first) and [Cost](docs/INSTALL.md#cost).
+The app itself is free (Apache 2.0). Forge usage is billed to the owner of the Developer Space the app is registered in, with a monthly free allowance per app; see [Who pays](docs/INSTALL.md#who-pays-read-first) and [Cost](docs/INSTALL.md#cost). Atlassian does not stop an app at the free allowance, and Forge gives apps no way to read their own usage, so the app has its own brake.
+
+### Usage guard (Settings → Monthly usage limit)
+
+- The app counts every Forge SQL (database) request it makes per calendar month (UTC) and shows the total against the free allowance (100,000 requests at the time of writing).
+- From 80% of the stop point it shows a warning. At the stop point (default **90%**):
+  - new scans are refused, and the automatic scan is skipped;
+  - a running scan pauses, keeps its position, and continues by itself on the 1st of the next month;
+  - Overview and space figures are no longer recalculated (the last figures stay visible).
+- Browsing results and approved clean-ups are **not** blocked, so you can always review and clean up. They are counted.
+- The count is the app's own and can differ slightly from Atlassian's. Under **Correct the count**, enter the figure from the developer console (app → Usage and charges) to bring it in line. Entering a figure above the stop point blocks scans for the rest of the month.
+- The limit, the stop percentage and the guard itself can be changed in Settings.
+
+### What uses database requests
+
+| Action | Database requests (approximate) |
+|---|---|
+| Opening the Attachments list, or changing a filter or page | 5–6 |
+| Trash tab | 6–8 |
+| Review queue or audit log page | 2 |
+| Overview and space figures | almost none (served from a cache) |
+| Clean-up, per file | 3–4 |
+| Full scan of a large site (2,500+ spaces, 150,000+ files) | about 15,000–25,000 |
+
+A scan is by far the largest cost, which is why the guard stops scans first and keeps the remaining 10% for browsing and clean-ups. On large sites, scan monthly (Settings → *Automatic scan every* = 30 days, the default for new installations).
+
+Separately from the monthly allowance, Confluence limits how much an app may request per hour. When that limit is reached, scans and clean-ups pause and continue by themselves; this costs nothing.
 
 ## Documentation
 
@@ -88,7 +115,6 @@ The app itself is free (Apache 2.0). Forge usage is billed to the owner of the D
 | Reports + CSV export | ✅ storage by space, type, uploader, month; CSV |
 | Bulk download | ⏳ CSV contains download links; ZIP download is not possible inside Forge UI |
 | Stale page detection and page archiving | ⏳ stale pages are counted; archiving is planned |
-| Duplicate *page* detection (AI-assisted) | ⏳ planned (Forge LLMs) |
 | Label merging, macro hygiene | ⏳ planned |
 | Migration readiness report, space retirement register | ⏳ planned |
 | Owner notifications | ⏳ planned |
